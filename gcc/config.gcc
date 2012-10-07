@@ -1837,14 +1837,44 @@ mep-*-*)
 	use_gcc_stdint=wrap
 	;;
 microblaze*-linux*)
-	tm_file="${tm_file} dbxelf.h gnu-user.h linux.h microblaze/linux.h"
+	case $target in
+	microblazeel-*)
+		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=0"
+		;;
+	microblaze-*)
+		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=4321"
+		;;
+	esac
+	tm_file="${tm_file} dbxelf.h gnu-user.h linux.h microblaze/linux.h glibc-stdint.h"
 	c_target_objs="${c_target_objs} microblaze-c.o"
 	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
-	tmake_file="${tmake_file} t-slibgcc-elf-ver t-slibgcc-nolc-override t-linux microblaze/t-microblaze"
-        extra_parts="crtbegin.o crtbeginS.o crtend.o crtendS.o crtbeginT.o"
+	tmake_file="${tmake_file} t-slibgcc-elf-ver t-slibgcc-nolc-override t-linux microblaze/t-microblaze-linux"
 	;;
+microblaze*-*-elf)
+	case $target in
+	microblazeel-*)
+		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=0"
+		;;
+	microblaze-*)
+		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=4321"
+		;;
+	esac
+	tm_file="${tm_file} dbxelf.h newlib-stdint.h"
+	c_target_objs="${c_target_objs} microblaze-c.o"
+	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
+	tmake_file="${tmake_file} microblaze/t-microblaze"
+	extra_parts="crtbegin.o crtbeginS.o crtend.o crtendS.o crtbeginT.o"
+        ;;
 microblaze*-*-*)
-        tm_file="${tm_file} dbxelf.h"
+	case $target in
+	microblazeel-*)
+		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=0"
+		;;
+	microblaze-*)
+		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=4321"
+		;;
+	esac
+ tm_file="${tm_file} dbxelf.h"
 	c_target_objs="${c_target_objs} microblaze-c.o"
 	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
         tmake_file="${tmake_file} microblaze/t-microblaze"

@@ -24,6 +24,8 @@
 
 #ifdef RTX_CODE
 extern int pic_address_needs_scratch (rtx);
+extern int legitimate_pic_operand_p (rtx);
+extern int legitimate_const_operand_p (rtx);
 extern void expand_block_move        (rtx *);
 extern void microblaze_expand_prologue (void);
 extern void microblaze_expand_epilogue (void);
@@ -35,12 +37,15 @@ extern void microblaze_expand_divide (rtx *);
 extern void microblaze_expand_conditional_branch (enum machine_mode, rtx *); 
 extern void microblaze_expand_conditional_branch_sf (rtx *); 
 extern int microblaze_can_use_return_insn (void);
+extern void microblaze_eh_return (rtx op0);
 extern int microblaze_const_double_ok (rtx, enum machine_mode);
+extern bool microblaze_cannot_force_const_mem (rtx);
 extern void print_operand (FILE *, rtx, int);
 extern void print_operand_address (FILE *, rtx);
 extern void init_cumulative_args (CUMULATIVE_ARGS *,tree, rtx);
 extern bool microblaze_legitimate_address_p (enum machine_mode, rtx, bool);
 extern int microblaze_is_interrupt_handler (void);
+extern int microblaze_is_fast_interrupt (void);
 extern rtx microblaze_return_addr (int, rtx);
 extern int simple_memory_operand (rtx, enum machine_mode);
 extern int double_memory_operand (rtx, enum machine_mode);

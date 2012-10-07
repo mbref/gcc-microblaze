@@ -42,12 +42,38 @@ extern int microblaze_section_threshold;
 extern int microblaze_dbx_regno[];
 
 extern int microblaze_no_unsafe_delay;
+extern int microblaze_has_clz;
+extern int microblaze_has_swap;
 extern enum pipeline_type microblaze_pipe;
 
 #define OBJECT_FORMAT_ELF
 
+#if TARGET_BIG_ENDIAN_DEFAULT
+#define TARGET_ENDIAN_DEFAULT    0
+#define TARGET_ENDIAN_OPTION     "mbig-endian"
+#else
+#define TARGET_ENDIAN_DEFAULT    MASK_LITTLE_ENDIAN
+#define TARGET_ENDIAN_OPTION     "mlittle-endian"
+#endif
+
 /* Default target_flags if no switches are specified  */
-#define TARGET_DEFAULT      (MASK_SOFT_MUL | MASK_SOFT_DIV | MASK_SOFT_FLOAT)
+#define TARGET_DEFAULT      (MASK_SOFT_MUL | MASK_SOFT_DIV | MASK_SOFT_FLOAT \
+                             | TARGET_ENDIAN_DEFAULT )
+
+/* Do we have CLZ?  */
+#define TARGET_HAS_CLZ      (TARGET_PATTERN_COMPARE && microblaze_has_clz)
+
+/* Do we have SWAPB and SWAPH?  */
+#define TARGET_HAS_SWAP     (microblaze_has_swap)
+
+/* The default is to not need GOT for TLS.  */
+#define TLS_NEEDS_GOT 0
+
+/* The default is to not support PIC.  */
+#define TARGET_SUPPORTS_PIC 1
+
+/* The default is to not need GOT for TLS.  */
+#define TLS_NEEDS_GOT 0
 
 /* What is the default setting for -mcpu= . We set it to v4.00.a even though 
    we are actually ahead. This is safest version that has generate code 
@@ -62,6 +88,7 @@ extern enum pipeline_type microblaze_pipe;
 	"%{mno-xl-barrel-shift:%<mxl-barrel-shift}", 	\
 	"%{mno-xl-pattern-compare:%<mxl-pattern-compare}", \
 	"%{mxl-soft-div:%<mno-xl-soft-div}", 		\
+	"%{mxl-reorder:%<mno-xl-reorder}", 		\
 	"%{msoft-float:%<mhard-float}"
 
 /* Tell collect what flags to pass to nm.  */
@@ -77,12 +104,16 @@ extern enum pipeline_type microblaze_pipe;
 #define TARGET_ASM_SPEC ""
 
 #define ASM_SPEC "\
-%(target_asm_spec)"
+%(target_asm_spec) \
+%{mbig-endian:-EB} \
+%{mlittle-endian:-EL}"
 
 /* Extra switches sometimes passed to the linker.  */
 /* -xl-mode-xmdstub translated to -Zxl-mode-xmdstub -- deprecated.  */
 
 #define LINK_SPEC "%{shared:-shared} -N -relax \
+  %{mbig-endian:-EB --oformat=elf32-microblaze} \
+  %{mlittle-endian:-EL --oformat=elf32-microblazeel} \
   %{Zxl-mode-xmdstub:-defsym _TEXT_START_ADDR=0x800} \
   %{mxl-mode-xmdstub:-defsym _TEXT_START_ADDR=0x800} \
   %{mxl-gp-opt:%{G*}} %{!mxl-gp-opt: -G 0} \
@@ -176,6 +207,21 @@ extern enum pipeline_type microblaze_pipe;
 #define INCOMING_RETURN_ADDR_RTX  			\
   gen_rtx_REG (VOIDmode, GP_REG_FIRST + MB_ABI_SUB_RETURN_ADDR_REGNUM)
 
+/* Specifies the offset from INCOMING_RETURN_ADDR_RTX and the actual return PC.  */
+#define RETURN_ADDR_OFFSET (8)
+
+/* Describe how we implement __builtin_eh_return.  */
+#define EH_RETURN_DATA_REGNO(N) (((N) < 2) ? MB_ABI_FIRST_ARG_REGNUM + (N) : INVALID_REGNUM)
+
+#define MB_EH_STACKADJ_REGNUM  MB_ABI_INT_RETURN_VAL2_REGNUM
+#define EH_RETURN_STACKADJ_RTX  gen_rtx_REG (Pmode, MB_EH_STACKADJ_REGNUM)
+
+/* Select a format to encode pointers in exception handling data.  CODE
+   is 0 for data, 1 for code labels, 2 for function pointers.  GLOBAL is
+   true if the symbol may be affected by dynamic relocations.  */
+#define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \
+  ((flag_pic || GLOBAL) ? DW_EH_PE_aligned : DW_EH_PE_absptr)
+
 /* Use DWARF 2 debugging information by default.  */
 #define DWARF2_DEBUGGING_INFO
 #define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
@@ -183,8 +229,8 @@ extern enum pipeline_type microblaze_pipe;
 /* Target machine storage layout */
 
 #define BITS_BIG_ENDIAN 0
-#define BYTES_BIG_ENDIAN 1
-#define WORDS_BIG_ENDIAN 1
+#define BYTES_BIG_ENDIAN (TARGET_LITTLE_ENDIAN == 0)
+#define WORDS_BIG_ENDIAN (BYTES_BIG_ENDIAN)
 #define BITS_PER_UNIT           8
 #define BITS_PER_WORD           32
 #define UNITS_PER_WORD          4
@@ -321,9 +367,14 @@ extern char microblaze_hard_regno_mode_ok[][FIRST_PSEUDO_REGISTER];
 
 #define NO_FUNCTION_CSE                 1
 
+#if 0
+/* REVISIT : Appears that PIC_ADDR_REGNUM is always a fixed register */
 #define PIC_OFFSET_TABLE_REGNUM         \
         (flag_pic ? (GP_REG_FIRST + MB_ABI_PIC_ADDR_REGNUM) : \
         INVALID_REGNUM)
+#else
+#define PIC_OFFSET_TABLE_REGNUM   (GP_REG_FIRST + MB_ABI_PIC_ADDR_REGNUM)
+#endif
 
 enum reg_class
 {
@@ -499,13 +550,14 @@ typedef struct microblaze_args
 
 #define FUNCTION_PROFILER(FILE, LABELNO) { \
   {                                        \
-    fprintf (FILE, "\tbrki\tr16,_mcount\n");           \
+    fprintf (FILE, "\tbralid\tr15,_mcount\nnop\n");         \
   }                                                    \
  }
 
 #define EXIT_IGNORE_STACK			1
 
-#define TRAMPOLINE_SIZE				(32 + 8)
+/* 4 insns + 2 words of data.  */
+#define TRAMPOLINE_SIZE				(6 * 4)
 
 #define TRAMPOLINE_ALIGNMENT			32
 
@@ -538,13 +590,12 @@ typedef struct microblaze_args
 
 /* Define this, so that when PIC, reload won't try to reload invalid
    addresses which require two reload registers.  */
-#define LEGITIMATE_PIC_OPERAND_P(X)  (!pic_address_needs_scratch (X))
+#define LEGITIMATE_PIC_OPERAND_P(X)  (legitimate_pic_operand_p(X))
 
 /* At present, GAS doesn't understand li.[sd], so don't allow it
    to be generated at present.  */
 #define LEGITIMATE_CONSTANT_P(X)				\
-  (GET_CODE (X) != CONST_DOUBLE					\
-    || microblaze_const_double_ok (X, GET_MODE (X)))
+   (legitimate_const_operand_p(X))
 
 #define CASE_VECTOR_MODE			(SImode)
 
@@ -759,9 +810,11 @@ do {									\
 
 /* Handle interrupt attribute.  */
 extern int interrupt_handler;
+extern int fast_interrupt;
 extern int save_volatiles;
 
 #define INTERRUPT_HANDLER_NAME "_interrupt_handler"
+#define FAST_INTERRUPT_NAME "_fast_interrupt"
 
 /* These #define added for C++.  */
 #define UNALIGNED_SHORT_ASM_OP          ".data16"
@@ -799,7 +852,7 @@ extern int save_volatiles;
 #define COMMON_ASM_OP			"\t.comm\t"
 #define LCOMMON_ASM_OP			"\t.lcomm\t"
 
-#define MAX_OFILE_ALIGNMENT		(32768*8)
+#define MAX_OFILE_ALIGNMENT		((1 << 28) * 8)
 
 #define TYPE_OPERAND_FMT        	"@%s"
 
@@ -896,8 +949,8 @@ do {									 \
 #undef LIB_SPEC
 #define LIB_SPEC \
 "%{!nostdlib: \
-%{pg:-start-group -lxilprofile -lgloss -lxil -lc -lm -end-group } \
-%{!pg:-start-group -lgloss -lxil -lc -lm -end-group }} "
+%{pg:-start-group -lxilprofile -lxil -lc -lm -end-group } \
+%{!pg:-start-group -lxil -lc -lm -end-group }} "
 
 #undef  ENDFILE_SPEC
 #define ENDFILE_SPEC "crtend.o%s crtn.o%s"

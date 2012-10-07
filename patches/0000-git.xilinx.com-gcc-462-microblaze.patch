@@ -1,0 +1,2415 @@
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/config.sub git.xilinx.com_microblaze-gnu_src_gcc/config.sub
+--- gcc-microblaze/config.sub	2012-10-07 20:41:45.945383161 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/config.sub	2012-09-28 23:26:48.673295263 +0200
+@@ -154,7 +154,7 @@ case $os in
+ 	-convergent* | -ncr* | -news | -32* | -3600* | -3100* | -hitachi* |\
+ 	-c[123]* | -convex* | -sun | -crds | -omron* | -dg | -ultra | -tti* | \
+ 	-harris | -dolphin | -highlevel | -gould | -cbm | -ns | -masscomp | \
+-	-apple | -axis | -knuth | -cray | -microblaze)
++	-apple | -axis | -knuth | -cray | -microblaze*)
+ 		os=
+ 		basic_machine=$1
+ 		;;
+@@ -260,7 +260,7 @@ case $basic_machine in
+ 	| ip2k | iq2000 \
+ 	| lm32 \
+ 	| m32c | m32r | m32rle | m68000 | m68k | m88k \
+-	| maxq | mb | microblaze | mcore | mep | metag \
++	| maxq | mb | microblaze | microblazeel | mcore | mep | metag \
+ 	| mips | mipsbe | mipseb | mipsel | mipsle \
+ 	| mips16 \
+ 	| mips64 | mips64el \
+@@ -356,7 +356,8 @@ case $basic_machine in
+ 	| lm32-* \
+ 	| m32c-* | m32r-* | m32rle-* \
+ 	| m68000-* | m680[012346]0-* | m68360-* | m683?2-* | m68k-* \
+-	| m88110-* | m88k-* | maxq-* | mcore-* | metag-* | microblaze-* \
++	| m88110-* | m88k-* | maxq-* | mcore-* | metag-* \
++	| microblaze-* | microblazeel-* \
+ 	| mips-* | mipsbe-* | mipseb-* | mipsel-* | mipsle-* \
+ 	| mips16-* \
+ 	| mips64-* | mips64el-* \
+@@ -753,7 +754,7 @@ case $basic_machine in
+ 		basic_machine=ns32k-utek
+ 		os=-sysv
+ 		;;
+-        microblaze)
++	microblaze*)
+ 		basic_machine=microblaze-xilinx
+ 		;;
+ 	mingw32)
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/crti.s git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/crti.s
+--- gcc-microblaze/gcc/config/microblaze/crti.s	2012-10-07 20:41:47.864504196 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/crti.s	2012-09-28 23:26:49.927195794 +0200
+@@ -26,10 +26,20 @@
+ 
+     .section .init, "ax"
+     .global __init
++
++    .weak _stack
++    .set  _stack, 0xffffffff
++    .weak _stack_end
++    .set  _stack_end, 0
++
+     .align 2
+ __init: 
+     addik   r1, r1, -8
+     sw      r15, r0, r1
++    la      r11, r0, _stack
++    mts     rshr, r11
++    la      r11, r0, _stack_end
++    mts     rslr, r11
+ 
+     .section .fini, "ax"
+     .global __fini
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/linux.h git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/linux.h
+--- gcc-microblaze/gcc/config/microblaze/linux.h	2012-10-07 18:58:57.154436200 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/linux.h	2012-09-28 23:26:49.927195794 +0200
+@@ -19,6 +19,11 @@
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.  */
+ 
++#undef TARGET_SUPPORTS_PIC
++#define TARGET_SUPPORTS_PIC 1
++
++#undef TLS_NEEDS_GOT
++#define TLS_NEEDS_GOT 1
+ 
+ #define DYNAMIC_LINKER "/lib/ld.so.1"
+ #undef  SUBTARGET_EXTRA_SPECS
+@@ -31,5 +36,16 @@
+     %{!static: \
+       %{rdynamic:-export-dynamic} \
+       -dynamic-linker %(dynamic_linker)} \
+-    %{static:-static}}"
++    %{static:-static}} \
++  %{mbig-endian:-EB} \
++  %{mlittle-endian:-EL}"
++
++/* For the microblaze-*-linux* subtarget.  */
++#undef TARGET_OS_CPP_BUILTINS
++#define TARGET_OS_CPP_BUILTINS()                \
++  do                                            \
++    {                                           \
++      LINUX_TARGET_OS_CPP_BUILTINS();           \
++    }                                           \
++  while (0)
+ 
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/microblaze.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.c
+--- gcc-microblaze/gcc/config/microblaze/microblaze.c	2012-10-07 20:41:47.864504196 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.c	2012-09-28 23:26:49.937194430 +0200
+@@ -84,7 +84,8 @@ enum microblaze_address_type
+   ADDRESS_CONST_INT,
+   ADDRESS_SYMBOLIC,
+   ADDRESS_GOTOFF,
+-  ADDRESS_PLT
++  ADDRESS_PLT,
++  ADDRESS_TLS
+ };
+ 
+ /* Classifies symbols
+@@ -95,7 +96,16 @@ A general symbol.  */
+ enum microblaze_symbol_type
+ {
+   SYMBOL_TYPE_INVALID,
+-  SYMBOL_TYPE_GENERAL
++  SYMBOL_TYPE_GENERAL,
++};
++
++/* TLS Address Type */
++enum tls_reloc {
++  TLS_GD,
++  TLS_LDM,
++  TLS_DTPREL,
++  TLS_IE,
++  TLS_LE
+ };
+ 
+ /* Classification of a MicroBlaze address.  */
+@@ -108,6 +118,7 @@ struct microblaze_address_info
+   rtx offset; 	/* Contains valid values on ADDRESS_CONST_INT and ADDRESS_REG.  */
+   rtx symbol; 	/* Contains valid values on ADDRESS_SYMBOLIC.  */
+   enum microblaze_symbol_type symbol_type;
++  enum tls_reloc tls_type;
+ };
+ 
+ /* Structure to be filled in by compute_frame_size with register
+@@ -143,6 +154,12 @@ int microblaze_section_threshold = -1;
+    delay slots.  -mcpu=v3.00.a or v4.00.a turns this on.  */
+ int microblaze_no_unsafe_delay;
+ 
++/* Set to one if the targeted core has the CLZ insn.  */
++int microblaze_has_clz = 0;
++
++/* Set to one if the targeted core has the swapb and swaph insn.  */
++int microblaze_has_swap = 0;
++
+ /* Which CPU pipeline do we use. We haven't really standardized on a CPU 
+    version having only a particular type of pipeline. There can still be 
+    options on the CPU to scale pipeline features up or down. :( 
+@@ -192,11 +209,13 @@ enum reg_class microblaze_regno_to_class
+ 		       and epilogue and use appropriate interrupt return.
+    save_volatiles    - Similiar to interrupt handler, but use normal return.  */
+ int interrupt_handler;
++int fast_interrupt;
+ int save_volatiles;
+ 
+ const struct attribute_spec microblaze_attribute_table[] = {
+   /* name         min_len, max_len, decl_req, type_req, fn_type, req_handler */
+   {"interrupt_handler", 0,       0,     true,    false,   false,        NULL},
++  {"fast_interrupt", 0,       0,     true,    false,   false,        NULL},
+   {"save_volatiles"   , 0,       0,     true,    false,   false,        NULL},
+   { NULL,        	0,       0,    false,    false,   false,        NULL}
+ };
+@@ -205,6 +224,11 @@ static int microblaze_interrupt_function
+ 
+ section *sdata2_section;
+ 
++#ifdef HAVE_AS_TLS
++#undef TARGET_HAVE_TLS
++#define TARGET_HAVE_TLS true
++#endif
++
+ /* Return truth value if a CONST_DOUBLE is ok to be a legitimate constant.  */
+ int
+ microblaze_const_double_ok (rtx op, enum machine_mode mode)
+@@ -277,6 +301,9 @@ simple_memory_operand (rtx op, enum mach
+       plus0 = XEXP (addr, 0);
+       plus1 = XEXP (addr, 1);
+ 
++      if (GET_CODE (plus0) != REG) 
++	return 0;
++
+       if (GET_CODE (plus0) == REG && GET_CODE (plus1) == CONST_INT
+ 	  && SMALL_INT (plus1))
+ 	{
+@@ -375,25 +402,258 @@ microblaze_valid_base_register_p (rtx x,
+ 	  && microblaze_regno_ok_for_base_p (REGNO (x), strict));
+ }
+ 
+-static bool
+-microblaze_classify_unspec (struct microblaze_address_info *info, rtx x)
++static rtx tls_get_addr_libfunc;
++
++static rtx
++get_tls_get_addr (void)
+ {
+-  info->symbol_type = SYMBOL_TYPE_GENERAL;
+-  info->symbol = XVECEXP (x, 0, 0);
++  if (!tls_get_addr_libfunc)
++    tls_get_addr_libfunc = init_one_libfunc ("__tls_get_addr");
++  return tls_get_addr_libfunc;
++}
++
++/* Return TRUE if X is a thread-local symbol.  */
++bool
++microblaze_tls_symbol_p (rtx x)
++{
++  if (! TARGET_HAVE_TLS)
++    return false;
++
++  if (GET_CODE (x) != SYMBOL_REF)
++    return false;
++
++  return SYMBOL_REF_TLS_MODEL (x) != 0;
++}
++
++static int
++microblaze_tls_operand_p_1 (rtx *x, void *data ATTRIBUTE_UNUSED)
++{
++  if (GET_CODE (*x) == SYMBOL_REF)
++    return SYMBOL_REF_TLS_MODEL (*x) != 0;
++
++  /* Don't recurse into UNSPEC_TLS looking for TLS symbols; these are
++     TLS offsets, not real symbol references.  */
++  if (GET_CODE (*x) == UNSPEC
++      && XINT (*x, 1) == UNSPEC_TLS)
++    return -1;
++
++  return 0;
++}
++
++/* Return TRUE if X contains any TLS symbol references.  */
++
++bool
++microblaze_tls_referenced_p (rtx x)
++{
++  if (! TARGET_HAVE_TLS)
++    return false;
++
++  return for_each_rtx (&x, microblaze_tls_operand_p_1, NULL);
++}
+ 
+-  if (XINT (x, 1) == UNSPEC_GOTOFF)
++bool
++microblaze_cannot_force_const_mem (rtx x)
++{
++	return microblaze_tls_referenced_p(x);
++}
++
++/* Return TRUE if X references a SYMBOL_REF.  */
++int
++symbol_mentioned_p (rtx x)
++{
++  const char * fmt;
++  int i;
++
++  if (GET_CODE (x) == SYMBOL_REF)
++    return 1;
++
++  /* UNSPEC entries for a symbol include the SYMBOL_REF, but they
++     are constant offsets, not symbols.  */
++  if (GET_CODE (x) == UNSPEC)
++    return 0;
++
++  fmt = GET_RTX_FORMAT (GET_CODE (x));
++
++  for (i = GET_RTX_LENGTH (GET_CODE (x)) - 1; i >= 0; i--)
+     {
+-      info->regA = gen_rtx_REG (SImode, PIC_OFFSET_TABLE_REGNUM);
+-      info->type = ADDRESS_GOTOFF;
++      if (fmt[i] == 'E')
++	{
++	  int j;
++
++	  for (j = XVECLEN (x, i) - 1; j >= 0; j--)
++	    if (symbol_mentioned_p (XVECEXP (x, i, j)))
++	      return 1;
++	}
++      else if (fmt[i] == 'e' && symbol_mentioned_p (XEXP (x, i)))
++	return 1;
+     }
+-  else if (XINT (x, 1) == UNSPEC_PLT)
++
++  return 0;
++}
++
++/* Return TRUE if X references a LABEL_REF.  */
++int
++label_mentioned_p (rtx x)
++{
++  const char * fmt;
++  int i;
++
++  if (GET_CODE (x) == LABEL_REF)
++    return 1;
++
++  /* UNSPEC entries for a symbol include a LABEL_REF for the referencing
++     instruction, but they are constant offsets, not symbols.  */
++  if (GET_CODE (x) == UNSPEC)
++    return 0;
++
++  fmt = GET_RTX_FORMAT (GET_CODE (x));
++  for (i = GET_RTX_LENGTH (GET_CODE (x)) - 1; i >= 0; i--)
+     {
+-      info->type = ADDRESS_PLT;
++      if (fmt[i] == 'E')
++	{
++	  int j;
++
++	  for (j = XVECLEN (x, i) - 1; j >= 0; j--)
++	    if (label_mentioned_p (XVECEXP (x, i, j)))
++	      return 1;
++	}
++      else if (fmt[i] == 'e' && label_mentioned_p (XEXP (x, i)))
++	return 1;
+     }
+-  else
++
++  return 0;
++}
++
++int
++tls_mentioned_p (rtx x)
++{
++  switch (GET_CODE (x))
+     {
+-      return false;
++    case CONST:
++      return tls_mentioned_p (XEXP (x, 0));
++
++    case UNSPEC:
++      if (XINT (x, 1) == UNSPEC_TLS)
++	return 1;
++
++    default:
++      return 0;
++    }
++}
++
++static rtx
++load_tls_operand (rtx x, rtx reg)
++{
++  rtx tmp;
++
++  if (reg == NULL_RTX)
++    reg = gen_reg_rtx (Pmode);
++
++  tmp = gen_rtx_CONST (Pmode, x);
++
++#if 0
++  /*  REVISIT: use add instead of move for address arithmetic */
++  tmp = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, tmp);
++
++  tmp = gen_rtx_CONST (SImode, tmp);
++
++  emit_move_insn (reg, tmp);
++#endif
++
++  emit_insn (gen_rtx_SET (VOIDmode,
++			  reg,
++			  gen_rtx_PLUS (Pmode, pic_offset_table_rtx, tmp)));
++
++  return reg;
++}
++
++static rtx
++microblaze_call_tls_get_addr (rtx x, rtx reg, rtx *valuep, int reloc)
++{
++  rtx insns, tls_entry;
++
++  /* REVISIT: Reusing code from PIC, may not be working */
++  df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
++
++  start_sequence ();
++
++  tls_entry = gen_rtx_UNSPEC (Pmode,
++			gen_rtvec (2, x, GEN_INT (reloc)) , UNSPEC_TLS);
++
++  reg = load_tls_operand (tls_entry, reg);
++
++  *valuep = emit_library_call_value (get_tls_get_addr (), NULL_RTX, LCT_PURE, /* LCT_CONST?  */
++				     Pmode, 1, reg, Pmode);
++
++  insns = get_insns ();
++  end_sequence ();
++
++  return insns;
++}
++
++rtx
++microblaze_legitimize_tls_address(rtx x, rtx reg)
++{
++  rtx dest, insns, ret, eqv, addend;
++  enum tls_model model;
++  model = SYMBOL_REF_TLS_MODEL (x);
++
++  switch (model)
++    {
++       case TLS_MODEL_LOCAL_DYNAMIC:
++       case TLS_MODEL_GLOBAL_DYNAMIC:
++       case TLS_MODEL_INITIAL_EXEC:
++           insns = microblaze_call_tls_get_addr (x, reg, &ret, TLS_GD);
++           dest = gen_reg_rtx (Pmode);
++           emit_libcall_block (insns, dest, ret, x);
++           break;
++
++       case TLS_MODEL_LOCAL_EXEC:
++           insns = microblaze_call_tls_get_addr (x, reg, &ret, TLS_LDM);
++
++           /* Attach a unique REG_EQUIV, to allow the RTL optimizers to
++     	      share the LDM result with other LD model accesses.  */
++           eqv = gen_rtx_UNSPEC (Pmode, gen_rtvec (1, const1_rtx),
++			         UNSPEC_TLS);
++           dest = gen_reg_rtx (Pmode);
++           emit_libcall_block (insns, dest, ret, eqv);
++
++           /* Load the addend.  */
++           addend = gen_rtx_UNSPEC (Pmode, gen_rtvec (2, x, GEN_INT (TLS_DTPREL)),
++			       UNSPEC_TLS);
++           addend = force_reg (SImode, gen_rtx_CONST (SImode, addend));
++           dest = gen_rtx_PLUS (Pmode, dest, addend);
++           break;
++
++       default:
++	gcc_unreachable ();
+     }
++  return dest;
++}
++
++static bool
++microblaze_classify_unspec (struct microblaze_address_info *info, rtx x)
++{
++  info->symbol_type = SYMBOL_TYPE_GENERAL;
++  info->symbol = XVECEXP (x, 0, 0);
++
++  switch (XINT (x, 1)) 
++    {
++	case UNSPEC_GOTOFF:
++      		info->regA = gen_rtx_REG (SImode, PIC_OFFSET_TABLE_REGNUM);
++		info->type = ADDRESS_GOTOFF;
++	  break;
++	case UNSPEC_PLT:
++      		info->type = ADDRESS_PLT;
++	  break;
++	case UNSPEC_TLS:
++      		    info->type = ADDRESS_TLS;
++      		    info->tls_type = INTVAL(XVECEXP(x, 0, 1));
++	  break;
++	default:
++      		return false;
++    }
++
+   return true;
+ }
+ 
+@@ -420,7 +680,13 @@ static int
+ get_base_reg (rtx x)
+ {
+   tree decl;
+-  int base_reg = (flag_pic ? MB_ABI_PIC_ADDR_REGNUM : MB_ABI_BASE_REGNUM);
++  //int base_reg = (flag_pic ? MB_ABI_PIC_ADDR_REGNUM : MB_ABI_BASE_REGNUM);
++  int base_reg;
++
++  if (!flag_pic || microblaze_tls_symbol_p(x))
++	base_reg = MB_ABI_BASE_REGNUM;
++  else if (flag_pic)
++        base_reg = MB_ABI_PIC_ADDR_REGNUM;
+ 
+   if (TARGET_XLGPOPT
+       && GET_CODE (x) == SYMBOL_REF
+@@ -498,28 +764,61 @@ microblaze_classify_address (struct micr
+ 	      }
+ 	    else if (GET_CODE (xplus1) == UNSPEC)
+ 	      {
++                /* Need offsettable address */
++                if (GET_MODE_SIZE (mode) > UNITS_PER_WORD)
++		  return false;
++
+ 		return microblaze_classify_unspec (info, xplus1);
+ 	      }
+ 	    else if ((GET_CODE (xplus1) == SYMBOL_REF ||
+-		      GET_CODE (xplus1) == LABEL_REF) && flag_pic == 2)
+-	      {
+-		return false;
+-	      }
+-	    else if (GET_CODE (xplus1) == SYMBOL_REF ||
+-		     GET_CODE (xplus1) == LABEL_REF ||
+-		     GET_CODE (xplus1) == CONST)
++		      GET_CODE (xplus1) == LABEL_REF))
+ 	      {
+-		if (GET_CODE (XEXP (xplus1, 0)) == UNSPEC)
+-		  return microblaze_classify_unspec (info, XEXP (xplus1, 0));
+-		else if (flag_pic == 2)
+-		  {
++		if (flag_pic == 2 || microblaze_tls_symbol_p(xplus1))
+ 		    return false;
+-		  }
+ 		info->type = ADDRESS_SYMBOLIC;
+ 		info->symbol = xplus1;
+ 		info->symbol_type = SYMBOL_TYPE_GENERAL;
+ 		return true;
+ 	      }
++	    else if (GET_CODE (xplus1) == CONST)
++	      {
++		rtx xconst0 = XEXP(xplus1, 0);
++
++		/* base + unspec */
++		if (GET_CODE (xconst0) == UNSPEC)
++                  {
++                    /* Need offsettable address */
++                    if (GET_MODE_SIZE (mode) > UNITS_PER_WORD)
++		      return false;
++		    return microblaze_classify_unspec(info, xconst0);
++                  }
++
++                /* for (plus x const_int) just look at x */
++                if (GET_CODE (xconst0) == PLUS && 
++  		    GET_CODE ( XEXP (xconst0, 1) ) == CONST_INT &&
++                    SMALL_INT ( XEXP (xconst0, 1)) )
++                  {
++                    /* This is ok as info->symbol is set to xplus1 the full 
++                       const-expression below */
++                    xconst0 = XEXP (xconst0, 0); 
++                  }
++
++                if (GET_CODE (xconst0) == SYMBOL_REF || 
++                      GET_CODE (xconst0) == LABEL_REF)
++                  {
++		    if (flag_pic == 2 || microblaze_tls_symbol_p(xconst0))
++		      return false;
++
++		    info->type = ADDRESS_SYMBOLIC;
++		    info->symbol = xplus1; 
++		    info->symbol_type = SYMBOL_TYPE_GENERAL;
++		    return true;
++                  }
++
++                /* Not base + symbol || base + UNSPEC */
++		return false;
++
++	      }
+ 	    else if (GET_CODE (xplus1) == REG
+ 		     && microblaze_valid_index_register_p (xplus1, mode,
+ 							   strict)
+@@ -549,20 +848,31 @@ microblaze_classify_address (struct micr
+ 	info->symbol = x;
+ 	info->regA = gen_rtx_raw_REG (mode, get_base_reg (x));
+ 
+-	if (GET_CODE (x) == CONST)
+-	  {
+-	    return !(flag_pic && pic_address_needs_scratch (x));
+-	  }
+-	else if (flag_pic == 2)
++        if (GET_CODE (x) == CONST) 
++         {
++  
++	    if (GET_CODE (XEXP (x, 0)) == UNSPEC) 
++             {
++                info->regA = gen_rtx_raw_REG (mode, 
++                                  get_base_reg ( XVECEXP ( XEXP(x,0), 0, 0) ));
++	        return microblaze_classify_unspec (info, XEXP (x, 0));
++             }
++	     return !(flag_pic && pic_address_needs_scratch (x));
++         }
++
++	if (flag_pic == 2)
+ 	  {
+ 	    return false;
+ 	  }
++	else if (microblaze_tls_symbol_p(x))
++	    return false;
+ 
+ 	return true;
+       }
+ 
+     case UNSPEC:
+       {
++        /* REVISIT: UNSPEC_TLS may not use PIC_OFFSET_TABEL_REGNUM */
+ 	if (reload_in_progress)
+ 	  df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
+ 	return microblaze_classify_unspec (info, x);
+@@ -588,6 +898,33 @@ microblaze_legitimate_address_p (enum ma
+   return microblaze_classify_address (&addr, x, mode, strict);
+ }
+ 
++int
++microblaze_valid_pic_const (rtx x)
++{
++  switch (GET_CODE (x))
++    {
++    case CONST:
++    case CONST_INT:
++    case CONST_DOUBLE:
++      return true;
++    default:
++      return false;
++    }
++}
++
++int
++microblaze_legitimate_pic_operand (rtx x)
++{
++  struct microblaze_address_info addr;
++
++  if (pic_address_needs_scratch (x))
++    return 0;
++  if (!microblaze_valid_pic_const(x))
++    return 0;
++
++  return 1;
++}
++
+ 
+ /* Try machine-dependent ways of modifying an illegitimate address
+    to be legitimate.  If we find one, return the new, valid address.
+@@ -669,7 +1006,7 @@ microblaze_legitimize_address (rtx x, rt
+ 	  return result;
+ 	}
+ 
+-      if (code0 == REG && REG_OK_FOR_BASE_P (xplus0) && flag_pic == 2)
++      if (code0 == REG && REG_OK_FOR_BASE_P (xplus0))
+ 	{
+ 	  if (reload_in_progress)
+ 	    df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
+@@ -680,26 +1017,62 @@ microblaze_legitimize_address (rtx x, rt
+ 	    }
+ 	  if (code1 == SYMBOL_REF)
+ 	    {
+-	      result =
+-		gen_rtx_UNSPEC (Pmode, gen_rtvec (1, xplus1), UNSPEC_GOTOFF);
+-	      result = gen_rtx_CONST (Pmode, result);
+-	      result = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, result);
+-	      result = gen_const_mem (Pmode, result);
+-	      result = gen_rtx_PLUS (Pmode, xplus0, result);
+-	      return result;
++             if (microblaze_tls_symbol_p(xplus1) )
++               {
++                 rtx tls_ref, reg;
++                 reg = gen_reg_rtx (Pmode);
++
++                 tls_ref = microblaze_legitimize_tls_address (xplus1, NULL_RTX);
++         	 emit_move_insn (reg, tls_ref);
++
++	         result = gen_rtx_PLUS (Pmode, xplus0, reg);
++
++                 return result;
++               }
++             else if (flag_pic == 2)
++               {
++                 rtx pic_ref, reg;
++                 reg = gen_reg_rtx (Pmode);
++
++	         pic_ref =
++		   gen_rtx_UNSPEC (Pmode, gen_rtvec (1, xplus1), UNSPEC_GOTOFF);
++	         pic_ref = gen_rtx_CONST (Pmode, pic_ref);
++	         pic_ref = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, pic_ref);
++	         pic_ref = gen_const_mem (Pmode, pic_ref);
++         	 emit_move_insn (reg, pic_ref);
++	         result = gen_rtx_PLUS (Pmode, xplus0, reg);
++	         return result;
++               }
+ 	    }
+ 	}
+     }
+ 
+   if (GET_CODE (xinsn) == SYMBOL_REF)
+     {
+-      if (reload_in_progress)
+-	df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
+-      result = gen_rtx_UNSPEC (Pmode, gen_rtvec (1, xinsn), UNSPEC_GOTOFF);
+-      result = gen_rtx_CONST (Pmode, result);
+-      result = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, result);
+-      result = gen_const_mem (Pmode, result);
+-      return result;
++      rtx reg;
++      if (microblaze_tls_symbol_p(xinsn) )
++        {
++          reg = microblaze_legitimize_tls_address (xinsn, NULL_RTX);
++        }
++      else
++        {
++          rtx pic_ref;
++      
++          if (reload_in_progress)
++	    df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
++
++	  pic_ref =
++	     gen_rtx_UNSPEC (Pmode, gen_rtvec (1, xinsn), UNSPEC_GOTOFF);
++  	  pic_ref = gen_rtx_CONST (Pmode, pic_ref);
++	  pic_ref = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, pic_ref);
++	  pic_ref = gen_const_mem (Pmode, pic_ref);
++          reg = pic_ref;
++#if 0
++          /* REVISIT - Extra reg not required unless there is an offset */
++          emit_move_insn (reg, pic_ref);
++#endif
++        }
++       return reg;
+     }
+ 
+   return x;
+@@ -1023,10 +1396,26 @@ microblaze_address_insns (rtx x, enum ma
+ 	  else
+ 	    return 2;
+ 	case ADDRESS_REG_INDEX:
+-	case ADDRESS_SYMBOLIC:
+ 	  return 1;
++	case ADDRESS_SYMBOLIC:
+ 	case ADDRESS_GOTOFF:
+ 	  return 2;
++	case ADDRESS_TLS:
++          switch (addr.tls_type) 
++            {
++              case TLS_GD:
++	  		return 2;
++                break;
++              case TLS_LDM:
++	  		return 2;
++                break;
++              case TLS_DTPREL:
++	  		return 1; /* REVISIT */
++                break;
++              default :
++                abort();
++                break;
++            }
+ 	default:
+ 	  break;
+ 	}
+@@ -1042,18 +1431,76 @@ microblaze_address_cost (rtx addr, bool 
+   return COSTS_N_INSNS (microblaze_address_insns (addr, GET_MODE (addr)));
+ }
+ 
++int legitimate_pic_operand_p (rtx x)
++{
++  if (flag_pic == 2 && (symbol_mentioned_p(x) || label_mentioned_p(x) ))
++    return 0;
++
++  if ( microblaze_tls_referenced_p(x) )
++	return 0;
++
++  return 1;
++}
++
++int
++legitimate_const_operand_p (rtx x)
++{
++
++  if (microblaze_cannot_force_const_mem(x))
++	return 0;
++
++  if (GET_CODE (x) == CONST_DOUBLE)
++    {
++      return microblaze_const_double_ok (x, GET_MODE (x));
++    }
++
++   /* Handle Case of (const (plus unspec const_int)) */
++   if (GET_CODE (x) == CONST && GET_CODE (XEXP (x,0)) == PLUS) 
++     {
++        rtx p0, p1;
++
++        p0 = XEXP( XEXP (x, 0), 0 );
++        p1 = XEXP( XEXP (x, 0), 1 );
++
++        if (GET_CODE(p1) == CONST_INT)
++          {
++            /* Const offset from UNSPEC is not supported */
++            if ( (GET_CODE (p0) == UNSPEC) )
++              return 0;
++
++            if ( (GET_CODE (p0) == SYMBOL_REF || GET_CODE (p0) == LABEL_REF) &&
++		(
++                  microblaze_tls_symbol_p (p0) ||
++                  !SMALL_INT (p1)) )
++              return 0;
++          }
++      }
++
++  return 1;
++}
++
+ /* Return nonzero if X is an address which needs a temporary register when 
+    reloaded while generating PIC code.  */
+ 
++/* REVISIT: TLS */
+ int
+ pic_address_needs_scratch (rtx x)
+ {
+-  /* An address which is a symbolic plus a non SMALL_INT needs a temp reg.  */
+-  if (GET_CODE (x) == CONST && GET_CODE (XEXP (x, 0)) == PLUS
+-      && GET_CODE (XEXP (XEXP (x, 0), 0)) == SYMBOL_REF
+-      && GET_CODE (XEXP (XEXP (x, 0), 1)) == CONST_INT
+-      && (flag_pic == 2 || !SMALL_INT (XEXP (XEXP (x, 0), 1))))
+-    return 1;
++  if (GET_CODE (x) == CONST && GET_CODE (XEXP (x,0)) == PLUS) 
++    {
++     rtx p0, p1;
++
++      p0 = XEXP( XEXP (x, 0), 0 );
++      p1 = XEXP( XEXP (x, 0), 1 );
++
++      if ( (GET_CODE (p0) == SYMBOL_REF || GET_CODE (p0) == LABEL_REF) &&
++           (GET_CODE (p1) == CONST_INT) &&
++           (flag_pic == 2 ||
++            microblaze_tls_symbol_p (p0) ||
++            !SMALL_INT (p1)) )
++
++          return 1;
++    }
+ 
+   return 0;
+ }
+@@ -1302,6 +1749,18 @@ microblaze_option_override (void)
+ 				  ? g_switch_value
+ 				  : MICROBLAZE_DEFAULT_GVALUE);
+ 
++  if (flag_pic)
++    {
++      /* Make sure it's 2, we only support one kind of PIC.  */
++      flag_pic = 2;
++      if (!TARGET_SUPPORTS_PIC)
++        {
++          error ("-fPIC/-fpic not supported for this target");
++          /* Clear it to avoid further errors.  */
++          flag_pic = 0;
++        }
++    }
++
+   /* Check the MicroBlaze CPU version for any special action to be done.  */
+   if (microblaze_select_cpu == NULL)
+     microblaze_select_cpu = MICROBLAZE_DEFAULT_CPU;
+@@ -1360,6 +1819,37 @@ microblaze_option_override (void)
+ 		 "-mxl-multiply-high can be used only with -mcpu=v6.00.a or greater");
+     }
+ 
++  ver = MICROBLAZE_VERSION_COMPARE (microblaze_select_cpu, "v8.10.a");
++  microblaze_has_clz = 1;
++  if (ver < 0)
++    {
++        /* MicroBlaze prior to 8.10.a didn't have clz.  */
++        microblaze_has_clz = 0;
++    }
++  ver = MICROBLAZE_VERSION_COMPARE (microblaze_select_cpu, "v8.30.a");
++  if (ver < 0)
++    {
++        /* MicroBlaze prior to 8.30a didn't have swapb or swaph insns. */
++        if (TARGET_REORDER)
++          warning (0,
++                 "-mxl-reorder can be used only with -mcpu=v8.30.a or greater");
++    }
++  else if (ver == 0)
++   {
++        /* MicroBlaze v8.30a has an undocumented dependency on pattern compare for swapb / swaph insns. */
++        if (TARGET_PATTERN_COMPARE)
++        {
++            microblaze_has_swap = 1;
++            target_flags |= MASK_REORDER;
++        }
++    }
++  else
++   {
++        /* Microblaze versions greater than v8.30a will be able to use swapb / swaph without pattern compare */
++        microblaze_has_swap = 1;
++        target_flags |= MASK_REORDER;
++   }
++
+   if (TARGET_MULTIPLY_HIGH && TARGET_SOFT_MUL)
+     error ("-mxl-multiply-high requires -mno-xl-soft-mul");
+ 
+@@ -1433,6 +1923,8 @@ microblaze_option_override (void)
+ /* Implement TARGET_OPTION_OPTIMIZATION_TABLE.  */
+ static const struct default_options microblaze_option_optimization_table[] =
+   {
++    /* Turn off ivopts by default. It messes up cse. */
++    { OPT_LEVELS_ALL, OPT_fivopts, NULL, 0 },
+     { OPT_LEVELS_1_PLUS, OPT_fomit_frame_pointer, NULL, 1 },
+     { OPT_LEVELS_NONE, 0, NULL, 0 }
+   };
+@@ -1452,6 +1944,17 @@ microblaze_interrupt_function_p (tree fu
+   return a != NULL_TREE;
+ }
+ 
++static int
++microblaze_fast_interrupt_function_p (tree func)
++{
++  tree a;
++
++  if (TREE_CODE (func) != FUNCTION_DECL)
++    return 0;
++
++  a = lookup_attribute ("fast_interrupt", DECL_ATTRIBUTES (func));
++  return a != NULL_TREE;
++}
+ /* Return true if FUNC is an interrupt function which uses
+    normal return, indicated by the "save_volatiles" attribute.  */
+ 
+@@ -1476,6 +1979,11 @@ microblaze_is_interrupt_handler (void)
+   return interrupt_handler;
+ }
+ 
++int
++microblaze_is_fast_interrupt (void)
++{
++  return fast_interrupt;
++}
+ /* Determine of register must be saved/restored in call.  */
+ static int
+ microblaze_must_save_register (int regno)
+@@ -1490,11 +1998,16 @@ microblaze_must_save_register (int regno
+   if (frame_pointer_needed && (regno == HARD_FRAME_POINTER_REGNUM))
+     return 1;
+ 
++  if (crtl->calls_eh_return
++      && regno == MB_ABI_SUB_RETURN_ADDR_REGNUM) {
++    return 1;
++  }
++
+   if (!current_function_is_leaf)
+     {
+       if (regno == MB_ABI_SUB_RETURN_ADDR_REGNUM)
+ 	return 1;
+-      if ((interrupt_handler || save_volatiles) &&
++      if ((fast_interrupt || interrupt_handler || save_volatiles) &&
+ 	  (regno >= 3 && regno <= 12))
+ 	return 1;
+     }
+@@ -1508,6 +2021,12 @@ microblaze_must_save_register (int regno
+ 	return 1;
+     }
+ 
++  if (fast_interrupt)
++    {
++      if (df_regs_ever_live_p (regno)
++	  || regno == MB_ABI_MSR_SAVE_REG)
++	return 1;
++    }
+   if (save_volatiles)
+     {
+       if (df_regs_ever_live_p (regno)
+@@ -1516,6 +2035,13 @@ microblaze_must_save_register (int regno
+ 	return 1;
+     }
+ 
++  if (crtl->calls_eh_return
++      && (regno == EH_RETURN_DATA_REGNO (0)
++          || regno == EH_RETURN_DATA_REGNO (1)))
++    {
++      return 1;
++    }
++
+   return 0;
+ }
+ 
+@@ -1577,6 +2103,8 @@ compute_frame_size (HOST_WIDE_INT size)	
+ 
+   interrupt_handler =
+     microblaze_interrupt_function_p (current_function_decl);
++  fast_interrupt =
++    microblaze_fast_interrupt_function_p (current_function_decl);
+   save_volatiles = microblaze_save_volatiles (current_function_decl);
+ 
+   gp_reg_size = 0;
+@@ -1589,6 +2117,7 @@ compute_frame_size (HOST_WIDE_INT size)	
+ 
+   total_size = var_size + args_size;
+ 
++  /* REVISIT: Analysze this call more */
+   if (flag_pic == 2)
+     /* force setting GOT.  */
+     df_set_regs_ever_live (MB_ABI_PIC_ADDR_REGNUM, true);
+@@ -1610,7 +2139,7 @@ compute_frame_size (HOST_WIDE_INT size)	
+   total_size += gp_reg_size;
+ 
+   /* Add 4 bytes for MSR.  */
+-  if (interrupt_handler)
++  if (interrupt_handler || fast_interrupt)
+     total_size += 4;
+ 
+   /* No space to be allocated for link register in leaf functions with no other
+@@ -1845,6 +2374,7 @@ print_operand (FILE * file, rtx op, int 
+ 	    case ADDRESS_CONST_INT:
+ 	    case ADDRESS_SYMBOLIC:
+ 	    case ADDRESS_GOTOFF:
++	    case ADDRESS_TLS:
+ 	      fputs ("i", file);
+ 	      break;
+ 	    case ADDRESS_REG_INDEX:
+@@ -1961,10 +2491,19 @@ print_operand (FILE * file, rtx op, int 
+   else if (letter == 't')
+     fputs (code == EQ ? "t" : "f", file);
+ 
+-  else if (code == CONST && GET_CODE (XEXP (op, 0)) == REG)
++  else if (code == CONST && 
++           (GET_CODE (XEXP (op, 0)) == REG ||
++            GET_CODE (XEXP (op, 0)) == UNSPEC))
+     {
+       print_operand (file, XEXP (op, 0), letter);
+     }
++  else if (code == CONST && 
++           (GET_CODE (XEXP (op, 0)) == PLUS) &&
++           (GET_CODE (XEXP (XEXP (op, 0), 0)) == REG) &&
++           (GET_CODE (XEXP (XEXP (op, 0), 1)) == CONST) )
++    {
++      print_operand_address (file, XEXP (op, 0) );
++    }
+   else if (letter == 'm')
+     fprintf (file, HOST_WIDE_INT_PRINT_DEC, (1L << INTVAL (op)));
+   else
+@@ -2025,6 +2564,7 @@ print_operand_address (FILE * file, rtx 
+     case ADDRESS_SYMBOLIC:
+     case ADDRESS_GOTOFF:
+     case ADDRESS_PLT:
++    case ADDRESS_TLS:
+       if (info.regA)
+ 	fprintf (file, "%s,", reg_names[REGNO (info.regA)]);
+       output_addr_const (file, info.symbol);
+@@ -2036,6 +2576,24 @@ print_operand_address (FILE * file, rtx 
+ 	{
+ 	  fputs ("@PLT", file);
+ 	}
++      else if (type == ADDRESS_TLS)
++	{
++          switch (info.tls_type) 
++            {
++              case TLS_GD:
++	        fputs ("@TLSGD", file);
++                break;
++              case TLS_LDM:
++	        fputs ("@TLSLDM", file);
++                break;
++              case TLS_DTPREL:
++	        fputs ("@TLSDTPREL", file);
++                break;
++              default :
++                abort();
++                break;
++            }
++	}
+       break;
+     case ADDRESS_INVALID:
+       fatal_insn ("invalid address", addr);
+@@ -2102,7 +2660,7 @@ save_restore_insns (int prologue)
+   base_reg_rtx = stack_pointer_rtx;
+ 
+   /* For interrupt_handlers, need to save/restore the MSR.  */
+-  if (interrupt_handler)
++  if (interrupt_handler || fast_interrupt)
+     {
+       isr_mem_rtx = gen_rtx_MEM (SImode,
+ 				 gen_rtx_PLUS (Pmode, base_reg_rtx,
+@@ -2116,7 +2674,7 @@ save_restore_insns (int prologue)
+       isr_msr_rtx = gen_rtx_REG (SImode, ST_REG);
+     }
+ 
+-  if (interrupt_handler && !prologue)
++  if ((interrupt_handler && !prologue) ||( fast_interrupt && !prologue) )
+     {
+       emit_move_insn (isr_reg_rtx, isr_mem_rtx);
+       emit_move_insn (isr_msr_rtx, isr_reg_rtx);
+@@ -2136,7 +2694,7 @@ save_restore_insns (int prologue)
+ 	  reg_rtx = gen_rtx_REG (SImode, regno);
+ 	  insn = gen_rtx_PLUS (Pmode, base_reg_rtx, GEN_INT (gp_offset));
+ 	  mem_rtx = gen_rtx_MEM (SImode, insn);
+-	  if (interrupt_handler || save_volatiles)
++	  if (interrupt_handler || save_volatiles || fast_interrupt)
+ 	    /* Do not optimize in flow analysis.  */
+ 	    MEM_VOLATILE_P (mem_rtx) = 1;
+ 
+@@ -2154,7 +2712,7 @@ save_restore_insns (int prologue)
+ 	}
+     }
+ 
+-  if (interrupt_handler && prologue)
++  if ((interrupt_handler && prologue) || (fast_interrupt && prologue))
+     {
+       emit_move_insn (isr_reg_rtx, isr_msr_rtx);
+       emit_move_insn (isr_mem_rtx, isr_reg_rtx);
+@@ -2184,10 +2742,12 @@ microblaze_function_prologue (FILE * fil
+       fputs ("\t.ent\t", file);
+       if (interrupt_handler && strcmp (INTERRUPT_HANDLER_NAME, fnname))
+ 	fputs ("_interrupt_handler", file);
++      else if (fast_interrupt && strcmp (FAST_INTERRUPT_NAME, fnname))
++	fputs ("_fast_interrupt", file);
+       else
+ 	assemble_name (file, fnname);
+       fputs ("\n", file);
+-      if (!interrupt_handler)
++      if (!interrupt_handler || !fast_interrupt)
+ 	ASM_OUTPUT_TYPE_DIRECTIVE (file, fnname, "function");
+     }
+ 
+@@ -2394,7 +2954,10 @@ microblaze_expand_prologue (void)
+ 	}
+     }
+ 
+-  if (flag_pic == 2 && df_regs_ever_live_p (MB_ABI_PIC_ADDR_REGNUM))
++#if 1
++  /* REVISIT: For TLS we may need GOT even when pic is not enabled */
++  if ((flag_pic == 2 || TLS_NEEDS_GOT ) && df_regs_ever_live_p (MB_ABI_PIC_ADDR_REGNUM))
++#endif
+     {
+       SET_REGNO (pic_offset_table_rtx, MB_ABI_PIC_ADDR_REGNUM);
+       emit_insn (gen_set_got (pic_offset_table_rtx));	/* setting GOT.  */
+@@ -2496,6 +3059,12 @@ microblaze_expand_epilogue (void)
+       emit_insn (gen_addsi3 (stack_pointer_rtx, stack_pointer_rtx, fsiz_rtx));
+     }
+ 
++  if (crtl->calls_eh_return)
++    emit_insn (gen_addsi3 (stack_pointer_rtx,
++                           stack_pointer_rtx,
++                           gen_rtx_raw_REG (SImode,
++                                            MB_EH_STACKADJ_REGNUM)));
++
+   emit_jump_insn (gen_return_internal (gen_rtx_REG (Pmode, GP_REG_FIRST +
+ 						    MB_ABI_SUB_RETURN_ADDR_REGNUM)));
+ }
+@@ -2542,6 +3111,11 @@ microblaze_globalize_label (FILE * strea
+       fputs (INTERRUPT_HANDLER_NAME, stream);
+       fputs ("\n\t.globl\t", stream);
+     }
++  if (fast_interrupt && strcmp (name, FAST_INTERRUPT_NAME))
++    {
++      fputs (FAST_INTERRUPT_NAME, stream);
++      fputs ("\n\t.globl\t", stream);
++    }
+   assemble_name (stream, name);
+   fputs ("\n", stream);
+ }
+@@ -2610,95 +3184,87 @@ microblaze_encode_section_info (tree dec
+ static rtx
+ expand_pic_symbol_ref (enum machine_mode mode ATTRIBUTE_UNUSED, rtx op)
+ {
+-  rtx result;
+-  result = gen_rtx_UNSPEC (Pmode, gen_rtvec (1, op), UNSPEC_GOTOFF);
+-  result = gen_rtx_CONST (Pmode, result);
+-  result = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, result);
+-  result = gen_const_mem (Pmode, result);
+-  return result;
++        rtx pic_ref;
++
++	pic_ref =
++	  gen_rtx_UNSPEC (Pmode, gen_rtvec (1, op), UNSPEC_GOTOFF);
++	pic_ref = gen_rtx_CONST (Pmode, pic_ref);
++	pic_ref = gen_rtx_PLUS (Pmode, pic_offset_table_rtx, pic_ref);
++	pic_ref = gen_const_mem (Pmode, pic_ref);
++		
++        return pic_ref;
+ }
+ 
++/*
++ * 
++ *
++ */
+ bool
+ microblaze_expand_move (enum machine_mode mode, rtx operands[])
+ {
+-  /* If operands[1] is a constant address invalid for pic, then we need to
+-     handle it just like LEGITIMIZE_ADDRESS does.  */
+-  if (flag_pic)
+-    {
+-      if (GET_CODE (operands[0]) == MEM)
+-	{
+-	  rtx addr = XEXP (operands[0], 0);
+-	  if (GET_CODE (addr) == SYMBOL_REF)
+-	    {
+-	      rtx ptr_reg, result;
++  rtx op0, op1;
+ 
+-	      if (reload_in_progress)
+-		df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
++  op0 = operands[0];
++  op1 = operands[1];
+ 
+-	      addr = expand_pic_symbol_ref (mode, addr);
+-	      ptr_reg = gen_reg_rtx (Pmode);
+-	      emit_move_insn (ptr_reg, addr);
+-	      result = gen_rtx_MEM (mode, ptr_reg);
+-	      operands[0] = result;
+-	    }
+-	}
+-      if (GET_CODE (operands[1]) == SYMBOL_REF
+-	  || GET_CODE (operands[1]) == LABEL_REF)
++  if ( ! register_operand (op0, SImode)
++      && ! register_operand (op1, SImode)
++      && (GET_CODE (op1) != CONST_INT || INTVAL (op1) != 0))
++    {
++      rtx temp = force_reg (SImode, op1);
++      emit_move_insn (op0, temp);
++      return true;
++    }
++  /* If operands[1] is a constant address invalid for pic, then we need to
++     handle it just like LEGITIMIZE_ADDRESS does.  */
++      if (GET_CODE (op1) == SYMBOL_REF 
++	  || GET_CODE (op1) == LABEL_REF)
+ 	{
+ 	  rtx result;
+-	  if (reload_in_progress)
+-	    df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
+-	  result = expand_pic_symbol_ref (mode, operands[1]);
+-	  if (GET_CODE (operands[0]) != REG)
+-	    {
+-	      rtx ptr_reg = gen_reg_rtx (Pmode);
+-	      emit_move_insn (ptr_reg, result);
+-	      emit_move_insn (operands[0], ptr_reg);
+-	    }
+-	  else
+-	    {
+-	      emit_move_insn (operands[0], result);
+-	    }
+-	  return true;
++          
++          if (microblaze_tls_symbol_p(op1))
++            {
++              result = microblaze_legitimize_tls_address (op1, NULL_RTX);
++	      emit_move_insn (op0, result);
++	      return true;
++            }
++          else if (flag_pic)
++            {
++	      if (reload_in_progress)
++	        df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
++	      result = expand_pic_symbol_ref (mode, op1);
++	      emit_move_insn (op0, result);
++	      return true;
++            }
+ 	}
+-      else if (GET_CODE (operands[1]) == MEM &&
+-	       GET_CODE (XEXP (operands[1], 0)) == SYMBOL_REF)
+-	{
+-	  rtx result;
+-	  rtx ptr_reg;
+-	  if (reload_in_progress)
+-	    df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
+-	  result = expand_pic_symbol_ref (mode, XEXP (operands[1], 0));
+ 
+-	  ptr_reg = gen_reg_rtx (Pmode);
++      /* Handle Case of (const (plus symbol const_int)) */
++      if (GET_CODE (op1) == CONST && GET_CODE (XEXP (op1,0)) == PLUS) 
++        {
++          rtx p0, p1;
+ 
+-	  emit_move_insn (ptr_reg, result);
+-	  result = gen_rtx_MEM (mode, ptr_reg);
+-	  emit_move_insn (operands[0], result);
+-	  return true;
+-	}
+-      else if (pic_address_needs_scratch (operands[1]))
+-	{
+-	  rtx temp = force_reg (SImode, XEXP (XEXP (operands[1], 0), 0));
+-	  rtx temp2 = XEXP (XEXP (operands[1], 0), 1);
++          p0 = XEXP( XEXP (op1, 0), 0 );
++          p1 = XEXP( XEXP (op1, 0), 1 );
+ 
+-	  if (reload_in_progress)
+-	    df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
+-	  emit_move_insn (operands[0], gen_rtx_PLUS (SImode, temp, temp2));
+-	  return true;
+-	}
+-    }
+-
+-  if ((reload_in_progress | reload_completed) == 0
+-      && !register_operand (operands[0], SImode)
+-      && !register_operand (operands[1], SImode)
+-      && (GET_CODE (operands[1]) != CONST_INT || INTVAL (operands[1]) != 0))
+-    {
+-      rtx temp = force_reg (SImode, operands[1]);
+-      emit_move_insn (operands[0], temp);
+-      return true;
+-    }
+-  return false;
++          if ( (GET_CODE (p1) == CONST_INT) &&
++              ( (GET_CODE (p0) == UNSPEC) ||
++               ( (GET_CODE (p0) == SYMBOL_REF || GET_CODE (p0) == LABEL_REF) &&
++                 (flag_pic == 2 ||
++                  microblaze_tls_symbol_p (p0) ||
++                  !SMALL_INT (p1)) ) ))
++	    {
++	      rtx temp = force_reg (SImode, p0);
++ 	      rtx temp2 = p1;
++ 
++             /* REVISIT: Refine this to not mark pic-reg live for !SMALL_INT
++                case above */
++ 	     if (flag_pic && reload_in_progress)
++ 	       df_set_regs_ever_live (PIC_OFFSET_TABLE_REGNUM, true);
++ 	     emit_move_insn (op0, gen_rtx_PLUS (SImode, temp, temp2));
++	     return true;
++            }
++         }
++    return false;
+ }
+ 
+ /* Expand shift operations.  */
+@@ -2741,10 +3307,13 @@ microblaze_return_addr (int count, rtx f
+   if (count != 0)
+     return NULL_RTX;
+ 
+-  return gen_rtx_PLUS (Pmode,
+-		       get_hard_reg_initial_val (Pmode,
+-						 MB_ABI_SUB_RETURN_ADDR_REGNUM),
+-		       GEN_INT (8));
++  return get_hard_reg_initial_val (Pmode,
++                                   MB_ABI_SUB_RETURN_ADDR_REGNUM);
++}
++
++void microblaze_eh_return (rtx op0)
++{
++  emit_insn (gen_movsi(gen_rtx_MEM(Pmode, stack_pointer_rtx), op0));
+ }
+ 
+ /* Put string into .sdata2 if below threashold.  */
+@@ -2772,14 +3341,10 @@ microblaze_elf_asm_init_sections (void)
+ static void
+ microblaze_asm_trampoline_template (FILE *f)
+ {
+-  fprintf (f, "\t.word\t0x03e00821\t\t# move   $1,$31\n");
+-  fprintf (f, "\t.word\t0x04110001\t\t# bgezal $0,.+8\n");
+-  fprintf (f, "\t.word\t0x00000000\t\t# nop\n");
+-  fprintf (f, "\t.word\t0x8fe30014\t\t# lw     $3,20($31)\n");
+-  fprintf (f, "\t.word\t0x8fe20018\t\t# lw     $2,24($31)\n");
+-  fprintf (f, "\t.word\t0x0060c821\t\t# move   $25,$3 (abicalls)\n");
+-  fprintf (f, "\t.word\t0x00600008\t\t# jr     $3\n");
+-  fprintf (f, "\t.word\t0x0020f821\t\t# move   $31,$1\n");
++  fprintf (f, "\tmfs r18, rpc\n");
++  fprintf (f, "\tlwi r3, r18, 16\n");
++  fprintf (f, "\tlwi r18, r18, 20\n");
++  fprintf (f, "\tbra r18\n");
+   /* fprintf (f, "\t.word\t0x00000000\t\t# <function address>\n");  */
+   /* fprintf (f, "\t.word\t0x00000000\t\t# <static chain value>\n");  */
+ }
+@@ -2793,11 +3358,11 @@ microblaze_trampoline_init (rtx m_tramp,
+   rtx mem;
+ 
+   emit_block_move (m_tramp, assemble_trampoline_template (),
+-		   GEN_INT (8*UNITS_PER_WORD), BLOCK_OP_NORMAL);
++		   GEN_INT (6*UNITS_PER_WORD), BLOCK_OP_NORMAL);
+ 
+-  mem = adjust_address (m_tramp, SImode, 8);
++  mem = adjust_address (m_tramp, SImode, 16);
+   emit_move_insn (mem, chain_value);
+-  mem = adjust_address (m_tramp, SImode, 12);
++  mem = adjust_address (m_tramp, SImode, 20);
+   emit_move_insn (mem, fnaddr);
+ }
+ 
+@@ -2819,19 +3384,8 @@ microblaze_emit_compare (enum machine_mo
+ 
+   if (code == EQ || code == NE)
+     {
+-      if (TARGET_PATTERN_COMPARE && GET_CODE(cmp_op1) == REG) 
+-        {
+-          if (code == EQ) 
+-	    emit_insn (gen_seq_internal_pat (comp_reg, cmp_op0, cmp_op1));
+-	  else
+-	    {    
+-	      emit_insn (gen_sne_internal_pat (comp_reg, cmp_op0, cmp_op1));
+-	      *cmp_code = EQ;
+-	    }
+-        }
+-      else
+-	/* Use xor for equal/not-equal comparison.  */
+-	emit_insn (gen_xorsi3 (comp_reg, cmp_op0, cmp_op1));
++      /* Use xor for equal/not-equal comparison.  */
++      emit_insn (gen_xorsi3 (comp_reg, cmp_op0, cmp_op1));
+     }
+   else if (code == GT || code == GTU || code == LE || code == LEU)
+     {
+@@ -2981,6 +3535,9 @@ microblaze_adjust_cost (rtx insn ATTRIBU
+ #undef TARGET_RTX_COSTS
+ #define TARGET_RTX_COSTS                microblaze_rtx_costs
+ 
++#undef TARGET_CANNOT_FORCE_CONST_MEM
++#define TARGET_CANNOT_FORCE_CONST_MEM   microblaze_cannot_force_const_mem
++
+ #undef TARGET_ADDRESS_COST
+ #define TARGET_ADDRESS_COST             microblaze_address_cost
+ 
+@@ -3054,9 +3611,6 @@ microblaze_adjust_cost (rtx insn ATTRIBU
+ #undef  TARGET_OPTION_OPTIMIZATION_TABLE
+ #define TARGET_OPTION_OPTIMIZATION_TABLE microblaze_option_optimization_table
+ 
+-#undef TARGET_EXCEPT_UNWIND_INFO
+-#define TARGET_EXCEPT_UNWIND_INFO  sjlj_except_unwind_info
+-
+ struct gcc_target targetm = TARGET_INITIALIZER;
+ 
+ #include "gt-microblaze.h"
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/microblaze-c.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze-c.c
+--- gcc-microblaze/gcc/config/microblaze/microblaze-c.c	2012-10-07 18:58:57.154436200 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze-c.c	2012-09-28 23:26:49.927195794 +0200
+@@ -41,6 +41,19 @@ microblaze_cpp_define (cpp_reader *pfile
+   builtin_assert ("cpu=microblaze");
+   builtin_assert ("machine=microblaze");
+   builtin_define ("__MICROBLAZE__");
++  builtin_define ("__microblaze__");
++  if (TARGET_LITTLE_ENDIAN)
++    {
++      builtin_define ("_LITTLE_ENDIAN");
++      builtin_define ("__LITTLE_ENDIAN__");
++      builtin_define ("__MICROBLAZEEL__");
++    }
++  else
++    {
++      builtin_define ("_BIG_ENDIAN");
++      builtin_define ("__BIG_ENDIAN__");
++      builtin_define ("__MICROBLAZEEB__");
++    }
+   if (!TARGET_SOFT_MUL) 
+     {
+       if (!flag_iso)
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/microblaze.h git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.h
+--- gcc-microblaze/gcc/config/microblaze/microblaze.h	2012-10-07 20:41:47.874198583 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.h	2012-09-28 23:26:49.937194430 +0200
+@@ -42,12 +42,38 @@ extern int microblaze_section_threshold;
+ extern int microblaze_dbx_regno[];
+ 
+ extern int microblaze_no_unsafe_delay;
++extern int microblaze_has_clz;
++extern int microblaze_has_swap;
+ extern enum pipeline_type microblaze_pipe;
+ 
+ #define OBJECT_FORMAT_ELF
+ 
++#if TARGET_BIG_ENDIAN_DEFAULT
++#define TARGET_ENDIAN_DEFAULT    0
++#define TARGET_ENDIAN_OPTION     "mbig-endian"
++#else
++#define TARGET_ENDIAN_DEFAULT    MASK_LITTLE_ENDIAN
++#define TARGET_ENDIAN_OPTION     "mlittle-endian"
++#endif
++
+ /* Default target_flags if no switches are specified  */
+-#define TARGET_DEFAULT      (MASK_SOFT_MUL | MASK_SOFT_DIV | MASK_SOFT_FLOAT)
++#define TARGET_DEFAULT      (MASK_SOFT_MUL | MASK_SOFT_DIV | MASK_SOFT_FLOAT \
++                             | TARGET_ENDIAN_DEFAULT )
++
++/* Do we have CLZ?  */
++#define TARGET_HAS_CLZ      (TARGET_PATTERN_COMPARE && microblaze_has_clz)
++
++/* Do we have SWAPB and SWAPH?  */
++#define TARGET_HAS_SWAP     (microblaze_has_swap)
++
++/* The default is to not need GOT for TLS.  */
++#define TLS_NEEDS_GOT 0
++
++/* The default is to not support PIC.  */
++#define TARGET_SUPPORTS_PIC 1
++
++/* The default is to not need GOT for TLS.  */
++#define TLS_NEEDS_GOT 0
+ 
+ /* What is the default setting for -mcpu= . We set it to v4.00.a even though 
+    we are actually ahead. This is safest version that has generate code 
+@@ -62,6 +88,7 @@ extern enum pipeline_type microblaze_pip
+ 	"%{mno-xl-barrel-shift:%<mxl-barrel-shift}", 	\
+ 	"%{mno-xl-pattern-compare:%<mxl-pattern-compare}", \
+ 	"%{mxl-soft-div:%<mno-xl-soft-div}", 		\
++	"%{mxl-reorder:%<mno-xl-reorder}", 		\
+ 	"%{msoft-float:%<mhard-float}"
+ 
+ /* Tell collect what flags to pass to nm.  */
+@@ -77,12 +104,16 @@ extern enum pipeline_type microblaze_pip
+ #define TARGET_ASM_SPEC ""
+ 
+ #define ASM_SPEC "\
+-%(target_asm_spec)"
++%(target_asm_spec) \
++%{mbig-endian:-EB} \
++%{mlittle-endian:-EL}"
+ 
+ /* Extra switches sometimes passed to the linker.  */
+ /* -xl-mode-xmdstub translated to -Zxl-mode-xmdstub -- deprecated.  */
+ 
+ #define LINK_SPEC "%{shared:-shared} -N -relax \
++  %{mbig-endian:-EB --oformat=elf32-microblaze} \
++  %{mlittle-endian:-EL --oformat=elf32-microblazeel} \
+   %{Zxl-mode-xmdstub:-defsym _TEXT_START_ADDR=0x800} \
+   %{mxl-mode-xmdstub:-defsym _TEXT_START_ADDR=0x800} \
+   %{mxl-gp-opt:%{G*}} %{!mxl-gp-opt: -G 0} \
+@@ -176,6 +207,21 @@ extern enum pipeline_type microblaze_pip
+ #define INCOMING_RETURN_ADDR_RTX  			\
+   gen_rtx_REG (VOIDmode, GP_REG_FIRST + MB_ABI_SUB_RETURN_ADDR_REGNUM)
+ 
++/* Specifies the offset from INCOMING_RETURN_ADDR_RTX and the actual return PC.  */
++#define RETURN_ADDR_OFFSET (8)
++
++/* Describe how we implement __builtin_eh_return.  */
++#define EH_RETURN_DATA_REGNO(N) (((N) < 2) ? MB_ABI_FIRST_ARG_REGNUM + (N) : INVALID_REGNUM)
++
++#define MB_EH_STACKADJ_REGNUM  MB_ABI_INT_RETURN_VAL2_REGNUM
++#define EH_RETURN_STACKADJ_RTX  gen_rtx_REG (Pmode, MB_EH_STACKADJ_REGNUM)
++
++/* Select a format to encode pointers in exception handling data.  CODE
++   is 0 for data, 1 for code labels, 2 for function pointers.  GLOBAL is
++   true if the symbol may be affected by dynamic relocations.  */
++#define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \
++  ((flag_pic || GLOBAL) ? DW_EH_PE_aligned : DW_EH_PE_absptr)
++
+ /* Use DWARF 2 debugging information by default.  */
+ #define DWARF2_DEBUGGING_INFO
+ #define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
+@@ -183,8 +229,8 @@ extern enum pipeline_type microblaze_pip
+ /* Target machine storage layout */
+ 
+ #define BITS_BIG_ENDIAN 0
+-#define BYTES_BIG_ENDIAN 1
+-#define WORDS_BIG_ENDIAN 1
++#define BYTES_BIG_ENDIAN (TARGET_LITTLE_ENDIAN == 0)
++#define WORDS_BIG_ENDIAN (BYTES_BIG_ENDIAN)
+ #define BITS_PER_UNIT           8
+ #define BITS_PER_WORD           32
+ #define UNITS_PER_WORD          4
+@@ -321,9 +367,14 @@ extern char microblaze_hard_regno_mode_o
+ 
+ #define NO_FUNCTION_CSE                 1
+ 
++#if 0
++/* REVISIT : Appears that PIC_ADDR_REGNUM is always a fixed register */
+ #define PIC_OFFSET_TABLE_REGNUM         \
+         (flag_pic ? (GP_REG_FIRST + MB_ABI_PIC_ADDR_REGNUM) : \
+         INVALID_REGNUM)
++#else
++#define PIC_OFFSET_TABLE_REGNUM   (GP_REG_FIRST + MB_ABI_PIC_ADDR_REGNUM)
++#endif
+ 
+ enum reg_class
+ {
+@@ -499,13 +550,14 @@ typedef struct microblaze_args
+ 
+ #define FUNCTION_PROFILER(FILE, LABELNO) { \
+   {                                        \
+-    fprintf (FILE, "\tbrki\tr16,_mcount\n");           \
++    fprintf (FILE, "\tbralid\tr15,_mcount\nnop\n");         \
+   }                                                    \
+  }
+ 
+ #define EXIT_IGNORE_STACK			1
+ 
+-#define TRAMPOLINE_SIZE				(32 + 8)
++/* 4 insns + 2 words of data.  */
++#define TRAMPOLINE_SIZE				(6 * 4)
+ 
+ #define TRAMPOLINE_ALIGNMENT			32
+ 
+@@ -534,17 +586,16 @@ typedef struct microblaze_args
+   (GET_CODE (X) == LABEL_REF || GET_CODE (X) == SYMBOL_REF		\
+     || GET_CODE (X) == CONST_INT 		                        \
+     || (GET_CODE (X) == CONST						\
+-	&& ! (flag_pic && pic_address_needs_scratch (X))))
++	&& ! (flag_pic && pic_address_needs_scratch (X))))               
+ 
+ /* Define this, so that when PIC, reload won't try to reload invalid
+    addresses which require two reload registers.  */
+-#define LEGITIMATE_PIC_OPERAND_P(X)  (!pic_address_needs_scratch (X))
++#define LEGITIMATE_PIC_OPERAND_P(X)  (legitimate_pic_operand_p(X))
+ 
+ /* At present, GAS doesn't understand li.[sd], so don't allow it
+    to be generated at present.  */
+ #define LEGITIMATE_CONSTANT_P(X)				\
+-  (GET_CODE (X) != CONST_DOUBLE					\
+-    || microblaze_const_double_ok (X, GET_MODE (X)))
++   (legitimate_const_operand_p(X))
+ 
+ #define CASE_VECTOR_MODE			(SImode)
+ 
+@@ -759,9 +810,11 @@ do {									\
+ 
+ /* Handle interrupt attribute.  */
+ extern int interrupt_handler;
++extern int fast_interrupt;
+ extern int save_volatiles;
+ 
+ #define INTERRUPT_HANDLER_NAME "_interrupt_handler"
++#define FAST_INTERRUPT_NAME "_fast_interrupt"
+ 
+ /* These #define added for C++.  */
+ #define UNALIGNED_SHORT_ASM_OP          ".data16"
+@@ -799,7 +852,7 @@ extern int save_volatiles;
+ #define COMMON_ASM_OP			"\t.comm\t"
+ #define LCOMMON_ASM_OP			"\t.lcomm\t"
+ 
+-#define MAX_OFILE_ALIGNMENT		(32768*8)
++#define MAX_OFILE_ALIGNMENT		((1 << 28) * 8)
+ 
+ #define TYPE_OPERAND_FMT        	"@%s"
+ 
+@@ -896,8 +949,8 @@ do {									 \
+ #undef LIB_SPEC
+ #define LIB_SPEC \
+ "%{!nostdlib: \
+-%{pg:-start-group -lxilprofile -lgloss -lxil -lc -lm -end-group } \
+-%{!pg:-start-group -lgloss -lxil -lc -lm -end-group }} "
++%{pg:-start-group -lxilprofile -lxil -lc -lm -end-group } \
++%{!pg:-start-group -lxil -lc -lm -end-group }} "
+ 
+ #undef  ENDFILE_SPEC
+ #define ENDFILE_SPEC "crtend.o%s crtn.o%s"
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/microblaze.md git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.md
+--- gcc-microblaze/gcc/config/microblaze/microblaze.md	2012-10-07 20:41:47.874198583 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.md	2012-09-28 23:26:49.937194430 +0200
+@@ -38,8 +38,9 @@
+   (UNSPEC_SET_GOT       101)    ;;
+   (UNSPEC_GOTOFF        102)    ;; GOT offset
+   (UNSPEC_PLT           103)    ;; jump table
+-  (UNSPEC_CMP		104)    ;; signed compare
+-  (UNSPEC_CMPU		105)    ;; unsigned compare
++  (UNSPEC_CMP		    104)    ;; signed compare
++  (UNSPEC_CMPU		    105)    ;; unsigned compare
++  (UNSPEC_TLS           106)    ;; jump table
+ ])
+ 
+ 
+@@ -346,6 +347,29 @@
+ (automata_option "time")
+ (automata_option "progress")
+ 
++
++(define_insn "bswaphi2"
++  [(set (match_operand:HI 0 "register_operand" "+r")
++        (bswap:HI (match_dup 0)))]
++  "TARGET_HAS_SWAP && TARGET_REORDER"
++  "swaph %0, %0"
++)
++
++(define_insn "bswapsi2"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++        (bswap:SI (match_operand:SI 1 "register_operand" "r")))]
++  "TARGET_HAS_SWAP && TARGET_REORDER"
++  "swapb %0, %1"
++)
++
++
++(define_insn "bswap"
++  [(set (match_operand:HI 0 "register_operand" "=r")
++        (bswap:HI (match_operand:HI 1 "register_operand" "r")))]
++  "TARGET_HAS_SWAP && TARGET_REORDER"
++  "swaph %0, %1"
++)
++
+ ;;----------------------------------------------------------------
+ ;; Microblaze delay slot description
+ ;;----------------------------------------------------------------
+@@ -438,7 +462,7 @@
+ (define_insn "addsi3"
+   [(set (match_operand:SI 0 "register_operand" "=d,d,d")
+ 	(plus:SI (match_operand:SI 1 "reg_or_0_operand" "%dJ,dJ,dJ")
+-		 (match_operand:SI 2 "arith_operand" "d,I,i")))]
++		 (match_operand:SI 2 "arith_plus_operand" "d,I,i")))]
+   ""
+   "@
+    addk\t%0,%z1,%2
+@@ -896,14 +920,14 @@
+   ""
+   { 
+      if (which_alternative == 0)
+-       output_asm_insn ("addk\t%D0,r0,%1", operands);
++       output_asm_insn ("addk\t%L0,r0,%1", operands);
+      else
+-       output_asm_insn ("lw%i1\t%D0,%1", operands);
++       output_asm_insn ("lw%i1\t%L0,%1", operands);
+ 
+-     output_asm_insn ("add\t%0,%D0,%D0", operands);
+-     output_asm_insn ("addc\t%0,r0,r0", operands);
+-     output_asm_insn ("beqi\t%0,.+8", operands);
+-     return "addi\t%0,r0,0xffffffff";
++     output_asm_insn ("add\t%M0,%L0,%L0", operands);
++     output_asm_insn ("addc\t%M0,r0,r0", operands);
++     output_asm_insn ("beqi\t%M0,.+8", operands);
++     return "addi\t%M0,r0,0xffffffff";
+   }
+   [(set_attr "type"	"multi,multi,multi")
+   (set_attr "mode"	"DI")
+@@ -952,8 +976,8 @@
+ 
+ 
+ (define_insn "*movdi_internal"
+-  [(set (match_operand:DI 0 "nonimmediate_operand" "=d,d,d,d,d,R,m")
+-	(match_operand:DI 1 "general_operand"      " d,i,J,R,m,d,d"))]
++  [(set (match_operand:DI 0 "nonimmediate_operand" "=d,d,d,d,d,R,o")
++	(match_operand:DI 1 "general_operand"      " d,i,J,R,o,d,d"))]
+   ""
+   { 
+     switch (which_alternative)
+@@ -961,7 +985,7 @@
+       case 0:
+         return "addk\t%0,%1\n\taddk\t%D0,%d1";
+       case 1:
+-	return "addik\t%0,r0,%h1\n\taddik\t%D0,r0,%j1 #li => la";
++	return "addik\t%M0,r0,%h1\n\taddik\t%L0,r0,%j1 #li => la";
+       case 2:
+ 	  return "addk\t%0,r0,r0\n\taddk\t%D0,r0,r0";
+       case 3:
+@@ -1021,7 +1045,7 @@
+ (define_insn "movsi_status"
+   [(set (match_operand:SI 0 "register_operand" "=d,d,z")
+         (match_operand:SI 1 "register_operand" "z,d,d"))]
+-  "interrupt_handler"
++  "interrupt_handler || fast_interrupt"
+   "@
+ 	mfs\t%0,%1  #mfs
+ 	addk\t%0,%1,r0 #add movsi
+@@ -1059,13 +1083,9 @@
+   (set_attr "length"	"4")])
+ 
+ (define_insn "*movsi_internal2"
+-  [(set (match_operand:SI 0 "nonimmediate_operand" "=d,d,d,   d,d,R, T")
+-	(match_operand:SI 1 "move_operand"         " d,I,Mnis,R,m,dJ,dJ"))]
+-  "(register_operand (operands[0], SImode)
+-    || register_operand (operands[1], SImode) 
+-    || (GET_CODE (operands[1]) == CONST_INT && INTVAL (operands[1]) == 0))
+-    && (flag_pic != 2 || (GET_CODE (operands[1]) != SYMBOL_REF 
+-                         && GET_CODE (operands[1]) != LABEL_REF))"
++  [(set (match_operand:SI 0 "nonimmediate_operand" "=d,d,d,   d,d,R,m")
++	(match_operand:SI 1 "move_src_operand"         " d,I,Mnis,R,m,dJ,dJ"))]
++  ""
+   "@
+    addk\t%0,%1,r0
+    addik\t%0,r0,%1\t# %X1
+@@ -1256,7 +1276,7 @@
+ ;; Applies to both TARGET_SOFT_FLOAT and TARGET_HARD_FLOAT
+ ;;
+ (define_insn "*movdf_internal"
+-  [(set (match_operand:DF 0 "nonimmediate_operand" "=d,d,d,d,To")
++  [(set (match_operand:DF 0 "nonimmediate_operand" "=d,d,d,d,o")
+         (match_operand:DF 1 "general_operand" "dG,o,F,T,d"))]
+   ""
+   {
+@@ -1711,10 +1731,10 @@
+ ;; Setting a register from an floating point comparison. 
+ ;;----------------------------------------------------------------
+ (define_insn "cstoresf4"
+-   [(set (match_operand:SI 0 "register_operand")
++   [(set (match_operand:SI 0 "register_operand" "=r")
+         (match_operator:SI 1 "ordered_comparison_operator"
+-	      [(match_operand:SF 2 "register_operand")
+-	       (match_operand:SF 3 "register_operand")]))]
++	      [(match_operand:SF 2 "register_operand" "r")
++	       (match_operand:SF 3 "register_operand" "r")]))]
+   "TARGET_HARD_FLOAT"
+   "fcmp.%C1\t%0,%3,%2"
+   [(set_attr "type"     "fcmp")
+@@ -1934,13 +1954,39 @@
+   }
+ )
+ 
++(define_expand "save_stack_block"
++  [(match_operand 0 "register_operand" "")
++   (match_operand 1 "register_operand" "")]
++  ""
++  {
++    emit_move_insn (operands[0], operands[1]);
++    DONE;
++  }
++)
++
++(define_expand "restore_stack_block"
++  [(match_operand 0 "register_operand" "")
++   (match_operand 1 "register_operand" "")]
++  ""
++  {
++    rtx retaddr = gen_rtx_MEM (Pmode, stack_pointer_rtx);
++    rtx rtmp    = gen_rtx_REG (SImode, R_TMP);
++
++    /* Move the retaddr.  */
++    emit_move_insn (rtmp, retaddr);
++    emit_move_insn (operands[0], operands[1]);
++    emit_move_insn (gen_rtx_MEM (Pmode, operands[0]), rtmp);
++    DONE;
++  }
++)
++
+ ;; Trivial return.  Make it look like a normal return insn as that
+ ;; allows jump optimizations to work better .
+ (define_insn "return"
+   [(return)]
+   "microblaze_can_use_return_insn ()"
+   { 
+-    if (microblaze_is_interrupt_handler ())
++    if (microblaze_is_interrupt_handler () || microblaze_is_fast_interrupt())
+         return "rtid\tr14, 0\;%#";
+     else
+         return "rtsd\tr15, 8\;%#";
+@@ -1958,7 +2004,7 @@
+               (return)])]
+   ""
+   {	
+-    if (microblaze_is_interrupt_handler ())
++    if (microblaze_is_interrupt_handler () || microblaze_is_fast_interrupt())
+         return "rtid\tr14,0 \;%#";
+     else
+         return "rtsd\tr15,8 \;%#";
+@@ -2054,7 +2100,7 @@
+   (set_attr "length"	"4")])
+ 
+ (define_insn "call_internal1"
+-  [(call (mem (match_operand:SI 0 "call_insn_operand" "ri"))
++  [(call (mem (match_operand:SI 0 "call_insn_simple_operand" "ri"))
+ 	 (match_operand:SI 1 "" "i"))
+   (clobber (reg:SI R_SR))]
+   ""
+@@ -2070,6 +2116,7 @@
+     else if (GET_CODE (target) == REG)
+         return "brald\tr15,%0\;%#";	
+     else {
++        debug_rtx(target);
+         fprintf (stderr,"Unsupported call insn\n");
+         return NULL;
+     }
+@@ -2165,9 +2212,17 @@
+     register rtx target = operands[1];
+     register rtx target2=gen_rtx_REG (Pmode,GP_REG_FIRST + MB_ABI_SUB_RETURN_ADDR_REGNUM);
+ 
+-    if (GET_CODE (target) == SYMBOL_REF){
+-	gen_rtx_CLOBBER (VOIDmode,target2);
+-	return "brlid\tr15,%1\;%#";
++    if (GET_CODE (target) == SYMBOL_REF)
++    {
++      gen_rtx_CLOBBER (VOIDmode,target2);
++      if (SYMBOL_REF_FLAGS (target) & SYMBOL_FLAG_FUNCTION)
++        {
++	  return "brlid\tr15,%1\;%#";
++        }
++      else
++        {
++	  return "bralid\tr15,%1\;%#";
++        }
+     }
+     else if (GET_CODE (target) == CONST_INT)
+         return "la\t%@,r0,%1\;brald\tr15,%@\;%#";
+@@ -2229,3 +2284,25 @@
+   [(set_attr "type" "multi")
+    (set_attr "length" "12")])
+ 
++;; This insn gives the count of leading number of zeros for the second
++;; operand and stores the result in first operand.
++(define_insn "clzsi2"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++        (clz:SI (match_operand:SI 1 "register_operand" "r")))]
++  "TARGET_HAS_CLZ"
++  "clz\t%0,%1"
++  [(set_attr "type"     "arith")
++  (set_attr "mode"      "none")
++  (set_attr "length"    "4")])
++
++; This is used in compiling the unwind routines.
++(define_expand "eh_return"
++  [(use (match_operand 0 "general_operand" ""))]
++  ""
++  "
++{
++  microblaze_eh_return(operands[0]);
++  DONE;
++}")
++
++
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/microblaze.opt git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.opt
+--- gcc-microblaze/gcc/config/microblaze/microblaze.opt	2012-10-07 20:41:47.874198583 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze.opt	2012-09-28 23:26:49.937194430 +0200
+@@ -55,10 +55,22 @@ mmemcpy
+ Target Mask(MEMCPY)
+ Don't optimize block moves, use memcpy
+ 
++mbig-endian
++Target Report RejectNegative InverseMask(LITTLE_ENDIAN)
++Assume target CPU is configured as big endian
++
++mlittle-endian
++Target Report RejectNegative Mask(LITTLE_ENDIAN)
++Assume target CPU is configured as little endian
++
+ mxl-soft-mul
+ Target Mask(SOFT_MUL)
+ Use the soft multiply emulation (default)
+ 
++mxl-reorder
++Target Mask(REORDER)
++Use reorder instructions (default)
++
+ mxl-soft-div
+ Target Mask(SOFT_DIV)
+ Use the software emulation for divides (default)
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/microblaze-protos.h git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze-protos.h
+--- gcc-microblaze/gcc/config/microblaze/microblaze-protos.h	2012-10-07 20:41:47.864504196 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/microblaze-protos.h	2012-09-28 23:26:49.927195794 +0200
+@@ -24,6 +24,8 @@
+ 
+ #ifdef RTX_CODE
+ extern int pic_address_needs_scratch (rtx);
++extern int legitimate_pic_operand_p (rtx);
++extern int legitimate_const_operand_p (rtx);
+ extern void expand_block_move        (rtx *);
+ extern void microblaze_expand_prologue (void);
+ extern void microblaze_expand_epilogue (void);
+@@ -35,12 +37,15 @@ extern void microblaze_expand_divide (rt
+ extern void microblaze_expand_conditional_branch (enum machine_mode, rtx *); 
+ extern void microblaze_expand_conditional_branch_sf (rtx *); 
+ extern int microblaze_can_use_return_insn (void);
++extern void microblaze_eh_return (rtx op0);
+ extern int microblaze_const_double_ok (rtx, enum machine_mode);
++extern bool microblaze_cannot_force_const_mem (rtx);
+ extern void print_operand (FILE *, rtx, int);
+ extern void print_operand_address (FILE *, rtx);
+ extern void init_cumulative_args (CUMULATIVE_ARGS *,tree, rtx);
+ extern bool microblaze_legitimate_address_p (enum machine_mode, rtx, bool);
+ extern int microblaze_is_interrupt_handler (void);
++extern int microblaze_is_fast_interrupt (void);
+ extern rtx microblaze_return_addr (int, rtx);
+ extern int simple_memory_operand (rtx, enum machine_mode);
+ extern int double_memory_operand (rtx, enum machine_mode);
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/predicates.md git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/predicates.md
+--- gcc-microblaze/gcc/config/microblaze/predicates.md	2012-10-07 18:58:57.164533389 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/predicates.md	2012-09-28 23:26:49.937194430 +0200
+@@ -30,6 +30,52 @@
+        (and (match_code "const_int,const_double")
+ 	    (match_test "LARGE_INT (op)"))))
+ 
++(define_predicate "arith_plus_operand"
++ (match_operand 0 "general_operand")
++{
++	switch (GET_CODE (op)) {
++		default:
++			return 0;
++		case CONST_INT:
++		case REG:
++			return 1;
++		case SYMBOL_REF:
++		case LABEL_REF:
++			if (flag_pic || microblaze_tls_referenced_p(op))
++				return 0;
++			return 1;
++		case CONST:
++		{
++			rtx const0;
++
++			const0 = XEXP (op, 0);
++
++			switch ( GET_CODE(const0) ) {
++				default:
++					return 0;
++
++				case UNSPEC :
++					return 1;
++
++				case PLUS :
++				{
++					rtx p0, p1;
++					p0 = XEXP (const0, 0);
++					p1 = XEXP (const0, 1);
++
++					if ( (GET_CODE(p0) == SYMBOL_REF ||
++						GET_CODE (p0) == LABEL_REF) &&
++					      GET_CODE(p1) == CONST_INT )
++					  {
++						return arith_plus_operand (p0, GET_MODE(p0));
++					  }
++				}
++			}
++		}
++	}
++	return 0;
++})
++
+ (define_predicate "const_0_operand"
+   (and (match_code "const_int,const_double")
+        (match_test "op == CONST0_RTX (GET_MODE (op))")))
+@@ -49,15 +95,27 @@
+ (define_predicate "call_insn_operand"
+   (match_test "CALL_INSN_OP (op)"))
+ 
++(define_predicate "call_insn_simple_operand"
++  (and (match_test "CALL_INSN_OP (op)")
++       (match_test "GET_CODE (op) == REG || GET_CODE (op) == SYMBOL_REF || GET_CODE (op) == CONST_INT")))
++
+ ;; Return if OPERAND is valid as a source operand for a move instruction.
+-(define_predicate "move_operand"
++(define_predicate "move_src_operand"
+   (and (
+      not (
+        and (match_code "plus")
+            (not (match_test "(GET_CODE (XEXP (op, 0)) == REG) ^ (GET_CODE (XEXP (op,1)) == REG)"))
+ 	 )
+        )
+-       (match_operand 0 "general_operand")))
++       (match_operand 0 "general_operand"))
++{
++  /* REVISIT - needs more careful analysis */
++  if (microblaze_tls_referenced_p(op) ||
++      (flag_pic && (symbol_mentioned_p(op) || label_mentioned_p(op))) ) 
++    return false;
++
++  return true;
++})
+ 
+ ;; Test for valid PIC call operand
+ (define_predicate "call_insn_plt_operand"
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/t-microblaze git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/t-microblaze
+--- gcc-microblaze/gcc/config/microblaze/t-microblaze	2012-10-07 20:41:47.874198583 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/t-microblaze	2012-09-28 23:26:49.937194430 +0200
+@@ -3,9 +3,11 @@ EXTRA_MULTILIB_PARTS = crtbegin$(objext)
+ 
+ EXTRA_PARTS += crti$(objext) crtn$(objext)
+ 
+-MULTILIB_OPTIONS = mxl-barrel-shift mno-xl-soft-mul mxl-multiply-high
+-MULTILIB_DIRNAMES = bs m mh
++MULTILIB_OPTIONS = mxl-barrel-shift mno-xl-soft-mul mxl-multiply-high mlittle-endian
++MULTILIB_DIRNAMES = bs m mh le
+ MULTILIB_EXCEPTIONS = *mxl-barrel-shift/mxl-multiply-high mxl-multiply-high
++MULTILIB_EXCEPTIONS += *mxl-barrel-shift/mxl-multiply-high/mlittle-endian
++MULTILIB_EXCEPTIONS += mxl-multiply-high/mlittle-endian
+ 
+ # Extra files
+ microblaze-c.o: $(srcdir)/config/microblaze/microblaze-c.c \
+@@ -27,7 +29,7 @@ dp-bit.c: $(srcdir)/config/fp-bit.c
+ 
+ # Assemble startup files
+ $(T)crti$(objext): $(srcdir)/config/microblaze/crti.s
+-	$(GCC_FOR_TARGET) -c $(srcdir)/config/microblaze/crti.s -o $(T)crti$(objext)
++	$(GCC_FOR_TARGET) $(MULTILIB_CFLAGS) -c $(srcdir)/config/microblaze/crti.s -o $(T)crti$(objext)
+ 
+ $(T)crtn$(objext): $(srcdir)/config/microblaze/crtn.s
+-	$(GCC_FOR_TARGET) -c $(srcdir)/config/microblaze/crtn.s -o $(T)crtn$(objext)
++	$(GCC_FOR_TARGET) $(MULTILIB_CFLAGS) -c $(srcdir)/config/microblaze/crtn.s -o $(T)crtn$(objext)
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config/microblaze/t-microblaze-linux git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/t-microblaze-linux
+--- gcc-microblaze/gcc/config/microblaze/t-microblaze-linux	1970-01-01 01:00:00.000000000 +0100
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config/microblaze/t-microblaze-linux	2012-09-28 23:26:49.937194430 +0200
+@@ -0,0 +1,21 @@
++MULTILIB_OPTIONS = mxl-barrel-shift mno-xl-soft-mul mxl-multiply-high
++MULTILIB_DIRNAMES = bs m mh
++MULTILIB_EXCEPTIONS = *mxl-barrel-shift/mxl-multiply-high mxl-multiply-high
++
++# Extra files
++microblaze-c.o: $(srcdir)/config/microblaze/microblaze-c.c \
++    $(srcdir)/config/microblaze/microblaze-protos.h \
++    $(CONFIG_H) $(SYSTEM_H) $(CPPLIB_H) $(TM_P_H) $(TREE_H) errors.h $(TM_H)
++	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
++	$(srcdir)/config/microblaze/microblaze-c.c
++
++# Build soft FP routines.
++FPBIT = fp-bit.c
++DPBIT = dp-bit.c
++
++fp-bit.c: $(srcdir)/config/fp-bit.c
++	echo '#define FLOAT' > fp-bit.c
++	cat $(srcdir)/config/fp-bit.c >> fp-bit.c
++
++dp-bit.c: $(srcdir)/config/fp-bit.c
++	cat $(srcdir)/config/fp-bit.c > dp-bit.c
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/config.gcc git.xilinx.com_microblaze-gnu_src_gcc/gcc/config.gcc
+--- gcc-microblaze/gcc/config.gcc	2012-10-07 20:41:47.284065448 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/config.gcc	2012-09-28 23:26:49.627198648 +0200
+@@ -1837,14 +1837,44 @@ mep-*-*)
+ 	use_gcc_stdint=wrap
+ 	;;
+ microblaze*-linux*)
+-	tm_file="${tm_file} dbxelf.h gnu-user.h linux.h microblaze/linux.h"
++	case $target in
++	microblazeel-*)
++		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=0"
++		;;
++	microblaze-*)
++		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=4321"
++		;;
++	esac
++	tm_file="${tm_file} dbxelf.h gnu-user.h linux.h microblaze/linux.h glibc-stdint.h"
+ 	c_target_objs="${c_target_objs} microblaze-c.o"
+ 	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
+-	tmake_file="${tmake_file} t-slibgcc-elf-ver t-slibgcc-nolc-override t-linux microblaze/t-microblaze"
+-        extra_parts="crtbegin.o crtbeginS.o crtend.o crtendS.o crtbeginT.o"
++	tmake_file="${tmake_file} t-slibgcc-elf-ver t-slibgcc-nolc-override t-linux microblaze/t-microblaze-linux"
+ 	;;
++microblaze*-*-elf)
++	case $target in
++	microblazeel-*)
++		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=0"
++		;;
++	microblaze-*)
++		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=4321"
++		;;
++	esac
++	tm_file="${tm_file} dbxelf.h newlib-stdint.h"
++	c_target_objs="${c_target_objs} microblaze-c.o"
++	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
++	tmake_file="${tmake_file} microblaze/t-microblaze"
++	extra_parts="crtbegin.o crtbeginS.o crtend.o crtendS.o crtbeginT.o"
++        ;;
+ microblaze*-*-*)
+-        tm_file="${tm_file} dbxelf.h"
++       	case $target in
++	microblazeel-*)
++		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=0"
++		;;
++	microblaze-*)
++		tm_defines="${tm_defines} TARGET_BIG_ENDIAN_DEFAULT=4321"
++		;;
++	esac
++ tm_file="${tm_file} dbxelf.h"
+ 	c_target_objs="${c_target_objs} microblaze-c.o"
+ 	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
+         tmake_file="${tmake_file} microblaze/t-microblaze"
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/configure git.xilinx.com_microblaze-gnu_src_gcc/gcc/configure
+--- gcc-microblaze/gcc/configure	2012-10-07 20:41:48.224047340 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/configure	2012-09-28 23:26:50.967201350 +0200
+@@ -17293,6 +17293,10 @@ fi
+ 
+     ;;
+ 
++  elf*)
++  # if non-hosted, don't bother with dlopen
++    ;;
++
+   *)
+     ac_fn_c_check_func "$LINENO" "shl_load" "ac_cv_func_shl_load"
+ if test "x$ac_cv_func_shl_load" = x""yes; then :
+@@ -17505,7 +17509,7 @@ else
+   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
+   lt_status=$lt_dlunknown
+   cat > conftest.$ac_ext <<_LT_EOF
+-#line 17508 "configure"
++#line 17512 "configure"
+ #include "confdefs.h"
+ 
+ #if HAVE_DLFCN_H
+@@ -17611,7 +17615,7 @@ else
+   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
+   lt_status=$lt_dlunknown
+   cat > conftest.$ac_ext <<_LT_EOF
+-#line 17614 "configure"
++#line 17618 "configure"
+ #include "confdefs.h"
+ 
+ #if HAVE_DLFCN_H
+@@ -22623,6 +22627,18 @@ foo:	data8	25
+ 	tls_first_minor=13
+ 	tls_as_opt=--fatal-warnings
+ 	;;
++  microblaze*-*-*)
++    conftest_s='
++	.section .tdata,"awT",@progbits
++x:
++	.word 2
++	.text
++	addik r5,r20,x@TLSGD
++	addik r5,r20,x@TLSLDM'
++	tls_first_major=2
++	tls_first_minor=20
++	tls_as_opt='--fatal-warnings'
++	;;
+   mips*-*-*)
+     conftest_s='
+ 	.section .tdata,"awT",@progbits
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/configure.ac git.xilinx.com_microblaze-gnu_src_gcc/gcc/configure.ac
+--- gcc-microblaze/gcc/configure.ac	2012-10-07 20:41:48.224047340 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/configure.ac	2012-09-28 23:26:50.967201350 +0200
+@@ -2794,6 +2794,18 @@ foo:	data8	25
+ 	tls_first_minor=13
+ 	tls_as_opt=--fatal-warnings
+ 	;;
++  microblaze-*-*)
++    conftest_s='
++	.section .tdata,"awT",@progbits
++x:
++	.word 2
++	.text
++	addik r5,r20,x@TLSGD
++	addik r5,r20,x@TLSLDM'
++	tls_first_major=2
++	tls_first_minor=20
++	tls_as_opt='--fatal-warnings'
++	;;
+   mips*-*-*)
+     conftest_s='
+ 	.section .tdata,"awT",@progbits
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.c-torture/execute/20101011-1.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.c-torture/execute/20101011-1.c
+--- gcc-microblaze/gcc/testsuite/gcc.c-torture/execute/20101011-1.c	2012-10-07 20:41:50.794045243 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.c-torture/execute/20101011-1.c	2012-09-28 23:27:06.164088024 +0200
+@@ -22,6 +22,9 @@
+   /* Not all Linux kernels deal correctly the breakpoints generated by
+      MIPS16 divisions by zero.  They show up as a SIGTRAP instead.  */
+ # define DO_TEST 0
++#elif defined (__MICROBLAZE__)
++/* We cannot rely on division by zero generating a trap. */
++# define DO_TEST 0
+ #else
+ # define DO_TEST 1
+ #endif
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.c-torture/execute/builtins/builtins.exp git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.c-torture/execute/builtins/builtins.exp
+--- gcc-microblaze/gcc/testsuite/gcc.c-torture/execute/builtins/builtins.exp	2012-10-07 20:41:50.804064638 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.c-torture/execute/builtins/builtins.exp	2012-09-28 23:27:06.292835321 +0200
+@@ -42,6 +42,10 @@ if [istarget "powerpc-*-darwin*"] {
+    lappend additional_flags "-Wl,-multiply_defined,suppress"
+ }
+ 
++if [istarget "microblaze*-*-linux*"] {
++   lappend additional_flags "-Wl,-zmuldefs"
++}
++
+ foreach src [lsort [find $srcdir/$subdir *.c]] {
+     if {![string match *-lib.c $src] && [runtest_file_p $runtests $src]} {
+ 	c-torture-execute [list $src \
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/20020312-2.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/20020312-2.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/20020312-2.c	2012-10-07 20:41:50.824122644 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/20020312-2.c	2012-09-28 23:27:06.492852457 +0200
+@@ -40,6 +40,8 @@ extern void abort (void);
+ /* No pic register.  */
+ #elif defined(__mcore__)
+ /* No pic register.  */
++#elif defined(__MICROBLAZE__)
++# define PIC_REG "r20"
+ #elif defined(__mips__)
+ /* PIC register is $28, but is used even without -fpic.  */
+ #elif defined(__MMIX__)
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/ivopts-2.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/ivopts-2.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/ivopts-2.c	2012-10-07 18:59:03.264089092 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/ivopts-2.c	2012-09-28 23:27:07.766143297 +0200
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -fdump-tree-ivopts-details" } */
++/* { dg-options "-O2 -fivopts -fdump-tree-ivopts-details" } */
+ 
+ long last_data_offset;
+ int store;
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/ivopts-3.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/ivopts-3.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/ivopts-3.c	2012-10-07 18:59:03.264089092 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/ivopts-3.c	2012-09-28 23:27:07.766143297 +0200
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -fdump-tree-ivopts-details" } */
++/* { dg-options "-O2 -fivopts -fdump-tree-ivopts-details" } */
+ 
+ void main (void)
+ {
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/loop-2.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/loop-2.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/loop-2.c	2012-10-07 18:59:03.274067386 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/loop-2.c	2012-09-28 23:27:07.777226349 +0200
+@@ -1,7 +1,7 @@
+ /* A test for strength reduction and induction variable elimination.  */
+ 
+ /* { dg-do compile } */
+-/* { dg-options "-O1 -fdump-tree-optimized" } */
++/* { dg-options "-O1 -fivopts -fdump-tree-optimized" } */
+ /* { dg-require-effective-target size32plus } */
+ 
+ /* Size of this structure should be sufficiently weird so that no memory
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/loop-4.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/loop-4.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/loop-4.c	2012-10-07 18:59:03.274067386 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/loop-4.c	2012-09-28 23:27:07.777226349 +0200
+@@ -1,7 +1,7 @@
+ /* A test for strength reduction and induction variable elimination.  */
+ 
+ /* { dg-do compile } */
+-/* { dg-options "-O1 -fdump-tree-optimized" } */
++/* { dg-options "-O1 -fivopts -fdump-tree-optimized" } */
+ /* { dg-require-effective-target size32plus } */
+ 
+ /* Size of this structure should be sufficiently weird so that no memory
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/loop-5.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/loop-5.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/loop-5.c	2012-10-07 20:41:51.914779453 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/loop-5.c	2012-09-28 23:27:07.777226349 +0200
+@@ -1,7 +1,7 @@
+ /* A test for induction variable merging.  */
+ 
+ /* { dg-do compile } */
+-/* { dg-options "-O1 -fdump-tree-optimized" } */
++/* { dg-options "-O1 -fivopts -fdump-tree-optimized" } */
+ 
+ void foo(long);
+ 
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/pr19210-1.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/pr19210-1.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/pr19210-1.c	2012-10-07 18:59:03.374065028 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/pr19210-1.c	2012-09-28 23:27:07.777226349 +0200
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -Wunsafe-loop-optimizations" } */
++/* { dg-options "-O2 -fivopts -Wunsafe-loop-optimizations" } */
+ extern void g(void);
+ 
+ void
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/pr19210-2.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/pr19210-2.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/pr19210-2.c	2012-10-07 18:59:03.374065028 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/pr19210-2.c	2012-09-28 23:27:07.777226349 +0200
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -funsafe-loop-optimizations -Wunsafe-loop-optimizations" } */
++/* { dg-options "-O2 -fivopts -funsafe-loop-optimizations -Wunsafe-loop-optimizations" } */
+ extern void g(void);
+ 
+ void
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/pr19590.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/pr19590.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/pr19590.c	2012-10-07 18:59:03.374065028 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/pr19590.c	2012-09-28 23:27:07.777226349 +0200
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-O2 -fdump-tree-ivopts" } */
++/* { dg-options "-O2 -fivopts -fdump-tree-ivopts" } */
+ 
+ void vnum_test8(int *data) 
+ { 
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/reassoc-19.c git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/reassoc-19.c
+--- gcc-microblaze/gcc/testsuite/gcc.dg/tree-ssa/reassoc-19.c	2012-10-07 18:59:03.394067068 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/gcc.dg/tree-ssa/reassoc-19.c	2012-09-28 23:27:07.797230722 +0200
+@@ -1,5 +1,5 @@
+ /* { dg-do compile } */
+-/* { dg-options "-Os -fdump-tree-reassoc2" } */
++/* { dg-options "-Os -fivopts -fdump-tree-reassoc2" } */
+ 
+ /* Slightly changed testcase from PR middle-end/40815.  */
+ void bar(char*, char*, int);
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/gcc/testsuite/g++.dg/opt/memcpy1.C git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/g++.dg/opt/memcpy1.C
+--- gcc-microblaze/gcc/testsuite/g++.dg/opt/memcpy1.C	2012-10-07 18:58:59.704465907 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/gcc/testsuite/g++.dg/opt/memcpy1.C	2012-09-28 23:27:04.363076249 +0200
+@@ -4,6 +4,10 @@
+ // { dg-do compile }
+ // { dg-options "-O" }
+ 
++#if defined (__MICROBLAZE__)
++#error "too slow on mb. Investigate."
++#endif
++
+ typedef unsigned char uint8_t;
+ typedef uint8_t uint8;
+ __extension__ typedef __SIZE_TYPE__ size_t;
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/libgcc/config/microblaze/modsi3.asm git.xilinx.com_microblaze-gnu_src_gcc/libgcc/config/microblaze/modsi3.asm
+--- gcc-microblaze/libgcc/config/microblaze/modsi3.asm	2012-10-07 20:41:55.894114933 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/libgcc/config/microblaze/modsi3.asm	2012-09-28 23:27:36.167220544 +0200
+@@ -55,6 +55,8 @@ $LaR5_Pos:
+ $LaR6_Pos:
+ 	ADDIK	r3,r0,0      # Clear mod
+ 	ADDIK	r30,r0,0     # clear div
++	BLTId	r5,$LaDIV2   # If r5 is still negative (0x80000000), skip
++			     # the first bit search.
+ 	ADDIK	r29,r0,32    # Initialize the loop count
+    # First part try to find the first '1' in the r5
+ $LaDIV1:
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/libgcc/config/microblaze/t-microblaze-linux git.xilinx.com_microblaze-gnu_src_gcc/libgcc/config/microblaze/t-microblaze-linux
+--- gcc-microblaze/libgcc/config/microblaze/t-microblaze-linux	1970-01-01 01:00:00.000000000 +0100
++++ git.xilinx.com_microblaze-gnu_src_gcc/libgcc/config/microblaze/t-microblaze-linux	2012-09-28 23:27:36.167220544 +0200
+@@ -0,0 +1,27 @@
++# For C++ crtstuff
++EXTRA_MULTILIB_PARTS = crtbegin$(objext) crtend$(objext)
++
++LIB2ADD += \
++        $(srcdir)/config/microblaze/divsi3.asm \
++        $(srcdir)/config/microblaze/modsi3.asm \
++        $(srcdir)/config/microblaze/muldi3_hard.asm \
++        $(srcdir)/config/microblaze/mulsi3.asm \
++        $(srcdir)/config/microblaze/stack_overflow_exit.asm \
++        $(srcdir)/config/microblaze/udivsi3.asm \
++        $(srcdir)/config/microblaze/umodsi3.asm \
++        $(srcdir)/config/microblaze/divsi3_table.c
++
++#       $(srcdir)/config/microblaze/moddi3.asm \ REDEFINITION FROM gcc/libgcc2.c
++
++MULTILIB_OPTIONS = mxl-barrel-shift mno-xl-soft-mul mxl-multiply-high mlittle-endian
++MULTILIB_DIRNAMES = bs m mh le
++MULTILIB_EXCEPTIONS = *mxl-barrel-shift/mxl-multiply-high mxl-multiply-high
++MULTILIB_EXCEPTIONS += *mxl-barrel-shift/mxl-multiply-high/mlittle-endian
++MULTILIB_EXCEPTIONS += mxl-multiply-high/mlittle-endian
++
++# Assemble startup files
++$(T)crti$(objext): $(gcc_srcdir)/config/microblaze/crti.s
++	$(GCC_FOR_TARGET) $(MULTILIB_CFLAGS) -c $(gcc_srcdir)/config/microblaze/crti.s -o $(T)crti$(objext)
++
++$(T)crtn$(objext): $(gcc_srcdir)/config/microblaze/crtn.s
++	$(GCC_FOR_TARGET) $(MULTILIB_CFLAGS) -c $(gcc_srcdir)/config/microblaze/crtn.s -o $(T)crtn$(objext)
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/libgcc/config.host git.xilinx.com_microblaze-gnu_src_gcc/libgcc/config.host
+--- gcc-microblaze/libgcc/config.host	2012-10-07 20:41:55.894114933 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/libgcc/config.host	2012-09-28 23:27:35.933221133 +0200
+@@ -402,8 +402,11 @@ mcore-*-elf)
+ 	;;
+ mcore-*-pe*)
+ 	;;
++microblaze*-linux*)
++	tmake_file="microblaze/t-microblaze-linux"
++	;;
+ microblaze*-*-*)
+-        tmake_file="microblaze/t-microblaze"
++	tmake_file="microblaze/t-microblaze"
+ 	;;
+ mips-sgi-irix[56]*)
+ 	;;
+diff -purN --exclude=.gitattributes --exclude=.gitignore --exclude=.git --exclude='*.old' --exclude=DEV-PHASE --exclude=patches gcc-microblaze/libgcc/Makefile.in git.xilinx.com_microblaze-gnu_src_gcc/libgcc/Makefile.in
+--- gcc-microblaze/libgcc/Makefile.in	2012-10-07 20:41:55.894114933 +0200
++++ git.xilinx.com_microblaze-gnu_src_gcc/libgcc/Makefile.in	2012-09-28 23:27:35.933221133 +0200
+@@ -772,8 +772,9 @@ all: libunwind.a
+ libgcc_s$(SHLIB_EXT): libunwind$(SHLIB_EXT)
+ endif
+ 
++all: libgcc_eh.a
+ ifeq ($(enable_shared),yes)
+-all: libgcc_eh.a libgcc_s$(SHLIB_EXT)
++all: libgcc_s$(SHLIB_EXT)
+ ifneq ($(LIBUNWIND),)
+ all: libunwind$(SHLIB_EXT)
+ endif
+@@ -950,10 +951,6 @@ install-libunwind:
+ install-shared:
+ 	$(mkinstalldirs) $(DESTDIR)$(inst_libdir)
+ 
+-	$(INSTALL_DATA) libgcc_eh.a $(DESTDIR)$(inst_libdir)/
+-	chmod 644 $(DESTDIR)$(inst_libdir)/libgcc_eh.a
+-	$(RANLIB) $(DESTDIR)$(inst_libdir)/libgcc_eh.a
+-
+ 	$(subst @multilib_dir@,$(MULTIDIR),$(subst \
+ 		@shlib_base_name@,libgcc_s,$(subst \
+ 		@shlib_slibdir_qual@,$(MULTIOSSUBDIR),$(SHLIB_INSTALL))))
+@@ -968,6 +965,10 @@ install-leaf: $(install-shared) $(instal
+ 	chmod 644 $(DESTDIR)$(inst_libdir)/libgcov.a
+ 	$(RANLIB) $(DESTDIR)$(inst_libdir)/libgcov.a
+ 
++	$(INSTALL_DATA) libgcc_eh.a $(DESTDIR)$(inst_libdir)/
++	chmod 644 $(DESTDIR)$(inst_libdir)/libgcc_eh.a
++	$(RANLIB) $(DESTDIR)$(inst_libdir)/libgcc_eh.a
++
+ 	parts="$(INSTALL_PARTS)";				\
+ 	for file in $$parts; do					\
+ 	  rm -f $(DESTDIR)$(inst_libdir)/$$file;		\
